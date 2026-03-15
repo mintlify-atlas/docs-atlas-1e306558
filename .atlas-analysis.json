@@ -1,0 +1,86 @@
+{
+  "projectType": "saas",
+  "projectName": "SIUT-ITSM Portal Sindical",
+  "projectDescription": "Portal web oficial del Sindicato Único de Trabajadores del Instituto Tecnológico Superior de Macuspana (SIUT-ITSM), que ofrece gestión de trámites, préstamos, publicaciones y comunicación para los agremiados.",
+  "theme": "linden",
+  "primaryColor": "#1a3a5c",
+  "lightColor": "#3a6ea8",
+  "darkColor": "#0d1f33",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentación",
+        "groups": [
+          {
+            "group": "Introducción",
+            "pages": ["introduction", "quickstart"]
+          },
+          {
+            "group": "Instalación y Configuración",
+            "pages": [
+              "setup/requirements",
+              "setup/installation",
+              "setup/environment",
+              "setup/database"
+            ]
+          },
+          {
+            "group": "Módulos",
+            "pages": [
+              "modules/auth",
+              "modules/users",
+              "modules/publications",
+              "modules/loans",
+              "modules/messaging",
+              "modules/settings"
+            ]
+          },
+          {
+            "group": "Panel de Usuario",
+            "pages": [
+              "portal/overview",
+              "portal/roles-permissions",
+              "portal/dashboards"
+            ]
+          },
+          {
+            "group": "Desarrollo",
+            "pages": [
+              "development/architecture",
+              "development/commands",
+              "development/testing",
+              "development/contributing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Sistema de autenticación con roles (agremiado, líder, finanzas, no_agremiado)",
+    "Gestión de usuarios con documentos y datos laborales/bancarios",
+    "Módulo de préstamos con simulador y seguimiento de solicitudes",
+    "Publicaciones y transparencia sindical",
+    "Mensajería interna y notificaciones por correo (PHPMailer)",
+    "Generación de documentos PDF (dompdf)",
+    "Panel de control adaptado al rol del usuario",
+    "Comandos CLI para importación de datos",
+    "Soporte Docker para despliegue en contenedores"
+  ],
+  "publicApiSurface": [
+    "LoginUseCase",
+    "LogoutUseCase",
+    "PasswordResetUseCase",
+    "ChangePasswordWithTokenUseCase",
+    "RecoverPasswordWithMagicLinkUseCase",
+    "CreateUserUseCase",
+    "AuthModule",
+    "UserModule",
+    "PublicationModule",
+    "LoanModule",
+    "MessagingModule",
+    "SettingModule",
+    "AbstractModule",
+    "ModuleInterface"
+  ]
+}
