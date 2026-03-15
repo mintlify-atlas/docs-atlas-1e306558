@@ -1,0 +1,134 @@
+---
+title: "Instalación"
+description: "Guía paso a paso para instalar el Portal Sindical SIUT-ITSM, con instrucciones para entorno local y con Docker."
+---
+
+Existen dos formas de instalar el portal: **directamente en el sistema** (recomendado para desarrollo) o **con Docker** (recomendado para entornos reproducibles o producción).
+
+## Instalación local
+
+<Steps>
+  <Step title="Clonar el repositorio">
+    ```bash
+    git clone https://github.com/mrtnsnchz/ost-siut-itsm.git
+    cd ost-siut-itsm
+    ```
+  </Step>
+
+  <Step title="Instalar dependencias">
+    Asegúrate de tener Composer disponible en tu `PATH`, luego ejecuta:
+
+    ```bash
+    composer install
+    ```
+
+    Composer descargará e instalará todas las dependencias de producción y desarrollo listadas en `composer.json`, incluyendo:
+
+    - `latte/latte` — motor de plantillas
+    - `php-di/php-di` — contenedor de inyección de dependencias
+    - `phpmailer/phpmailer` — envío de correos
+    - `dompdf/dompdf` — generación de PDF
+    - `monolog/monolog` — logging
+    - `vlucas/phpdotenv` — carga de variables de entorno
+    - `ramsey/uuid` — generación de UUIDs
+    - `league/csv` — importación de datos CSV
+  </Step>
+
+  <Step title="Configurar el entorno">
+    Copia el archivo de variables de entorno y edítalo:
+
+    ```bash
+    cp .env.example .env
+    ```
+
+    Consulta [Variables de entorno](/setup/environment) para la descripción de cada variable.
+  </Step>
+
+  <Step title="Crear la base de datos e importar el esquema">
+    Crea la base de datos en tu servidor MySQL o MariaDB:
+
+    ```sql
+    CREATE DATABASE siut_itsm CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    ```
+
+    Luego importa el esquema y, opcionalmente, los datos de ejemplo:
+
+    ```bash
+    mysql -u tu_usuario -p siut_itsm < database.sql
+    mysql -u tu_usuario -p siut_itsm < database.seed.sql
+    ```
+  </Step>
+
+  <Step title="Iniciar el servidor de desarrollo">
+    ```bash
+    composer run servidor
+    ```
+
+    El portal estará disponible en [http://localhost:8888](http://localhost:8888).
+  </Step>
+</Steps>
+
+---
+
+## Instalación con Docker
+
+El repositorio incluye un `Dockerfile` y un `compose.yaml` para levantar el portal junto con una base de datos MySQL 8.0 y el gestor de base de datos DBHub.
+
+### Servicios incluidos
+
+| Servicio | Imagen | Puerto local |
+|---|---|---|
+| `app` | Construido desde `Dockerfile` (php:8.3-apache) | `8080` |
+| `db` | `mysql:8.0` | `3306` |
+| `dbhub` | `bytebase/dbhub` | `8080` |
+
+### Pasos
+
+<Steps>
+  <Step title="Clonar el repositorio">
+    ```bash
+    git clone https://github.com/mrtnsnchz/ost-siut-itsm.git
+    cd ost-siut-itsm
+    ```
+  </Step>
+
+  <Step title="Configurar el archivo .env">
+    ```bash
+    cp .env.example .env
+    ```
+
+    Actualiza `DB_HOST` al nombre del servicio Docker y ajusta las credenciales para que coincidan con las definidas en `compose.yaml`:
+
+    ```ini
+    DB_HOST=db
+    DB_NAME=my_db
+    DB_USER=root
+    DB_PASSWORD=root
+    DB_PORT=3306
+    ```
+  </Step>
+
+  <Step title="Construir y levantar los contenedores">
+    ```bash
+    docker compose up --build
+    ```
+
+    El servicio `app` espera a que la base de datos esté saludable antes de iniciar (`depends_on` con `condition: service_healthy`).
+  </Step>
+
+  <Step title="Importar el esquema de base de datos">
+    Una vez que los contenedores estén en ejecución, importa el esquema:
+
+    ```bash
+    docker compose exec db mysql -uroot -proot my_db < database.sql
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  Los volúmenes `db_data` y `vendor_data` declarados en `compose.yaml` persisten la base de datos y el directorio `vendor/` entre reinicios del contenedor, por lo que `composer install` solo se ejecuta la primera vez.
+</Note>
+
+<Warning>
+  Las credenciales `MYSQL_ROOT_PASSWORD: root` del archivo `compose.yaml` son solo para desarrollo. No uses estas credenciales en un entorno de producción.
+</Warning>

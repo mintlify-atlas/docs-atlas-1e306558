@@ -1,0 +1,282 @@
+---
+title: "Módulo de usuarios"
+description: "Creación y gestión de perfiles de usuario, datos personales, bancarios y laborales, documentos de afiliación y roles del sistema."
+---
+
+## Descripción general
+
+`UserModule` registra el repositorio de usuarios y el único caso de uso de escritura disponible actualmente: `CreateUserUseCase`. La gestión avanzada de perfiles (actualización, desactivación) se realiza desde las páginas del portal que operan directamente con `UserRepositoryInterface`.
+
+```php
+final class UserModule extends AbstractModule
+{
+    protected const array REPOSITORIES = [
+        UserRepositoryInterface::class => PdoUserRepository::class,
+    ];
+
+    protected const array USE_CASES = [
+        CreateUserUseCase::class,
+    ];
+}
+```
+
+---
+
+## Roles del sistema
+
+<CardGroup cols={3}>
+  <Card title="agremiado">
+    Trabajador afiliado al sindicato. Puede acceder al portal, solicitar préstamos y ver publicaciones.
+  </Card>
+  <Card title="lider">
+    Líder sindical. Tiene permisos de gestión sobre publicaciones y acceso a secciones administrativas.
+  </Card>
+  <Card title="finanzas">
+    Área de finanzas. Gestiona el flujo de préstamos, valida documentos y genera comprobantes.
+  </Card>
+  <Card title="administrador">
+    Acceso completo al sistema, incluyendo configuración de colores y gestión de usuarios.
+  </Card>
+  <Card title="no_agremiado">
+    Rol por defecto al crear un usuario. Acceso limitado hasta que sea promovido a `agremiado`.
+  </Card>
+</CardGroup>
+
+```php
+enum RoleEnum: string
+{
+    case Lider       = "lider";
+    case Admin       = "administrador";
+    case Agremiado   = "agremiado";
+    case NoAgremiado = "no_agremiado";
+    case Finanzas    = "finanzas";
+}
+```
+
+---
+
+## CreateUserUseCase
+
+**Firma completa:**
+
+```php
+final readonly class CreateUserUseCase
+{
+    public function __construct(
+        private UserRepositoryInterface $userRepository,
+    ) {}
+
+    public function execute(CreateUser $dto): bool
+}
+```
+
+El caso de uso recibe un DTO tipado, construye los value objects de dominio y persiste el usuario con su hash de contraseña:
+
+```php
+public function execute(CreateUser $dto): bool
+{
+    $passwordHash = password_hash($dto->password, PASSWORD_DEFAULT);
+
+    $user = new User(
+        id: 0,
+        email: $dto->email,
+        role: $dto->role,
+        active: $dto->active,
+        personalInfo: new PersonalInfo(
+            name:      $dto->name,
+            surnames:  $dto->surnames,
+            curp:      $dto->curp,
+            birthdate: $dto->birthdate,
+            address:   $dto->address,
+            phone:     $dto->phone,
+            photo:     $dto->photo,
+        ),
+        bankingData: new BankingData(
+            bankName:       $dto->bankName,
+            interbankCode:  $dto->interbankCode,
+            bankAccount:    $dto->bankAccount,
+        ),
+        workData: new WorkData(
+            category:      $dto->category,
+            department:    $dto->department,
+            nss:           $dto->nss,
+            salary:        $dto->salary,
+            workStartDate: $dto->workStartDate,
+        ),
+    );
+
+    return $this->userRepository->save($user, $passwordHash);
+}
+```
+
+---
+
+## DTO: CreateUser
+
+```php
+final readonly class CreateUser
+{
+    public function __construct(
+        public string            $email,
+        public string            $password,
+        public string            $name,
+        public string            $surnames,
+        public RoleEnum          $role           = RoleEnum::NoAgremiado,
+        public bool              $active         = true,
+        public ?string           $curp           = null,
+        public ?DateTimeImmutable $birthdate      = null,
+        public ?string           $address        = null,
+        public ?string           $phone          = null,
+        public ?string           $photo          = null,
+        public ?string           $bankName       = null,
+        public ?string           $interbankCode  = null,
+        public ?string           $bankAccount    = null,
+        public ?string           $category       = null,
+        public ?string           $department     = null,
+        public ?string           $nss            = null,
+        public float             $salary         = 0.0,
+        public ?DateTimeImmutable $workStartDate  = null,
+    ) {}
+}
+```
+
+<Note>
+El único campo requerido en términos de completitud de perfil es `curp` junto con `interbankCode`. El método `User::isComplete()` retorna `true` únicamente cuando ambos campos están presentes.
+</Note>
+
+---
+
+## Estructura de datos: tabla `users`
+
+```sql
+CREATE TABLE IF NOT EXISTS users (
+    user_id         INT AUTO_INCREMENT PRIMARY KEY,
+    -- autenticación
+    email           VARCHAR(100)   NOT NULL UNIQUE,
+    password_hash   VARCHAR(255)   NOT NULL,
+    role            VARCHAR(20)    NOT NULL DEFAULT 'no_agremiado',
+    active          BOOLEAN                 DEFAULT TRUE,
+    -- información personal
+    curp            VARCHAR(20),
+    name            VARCHAR(100)   NOT NULL,
+    surnames        VARCHAR(255)   NOT NULL,
+    birthdate       DATE                    DEFAULT NULL,
+    address         VARCHAR(255),
+    phone           VARCHAR(50),
+    photo           VARCHAR(255),
+    -- datos bancarios
+    bank_name       VARCHAR(100),
+    interbank_code  VARCHAR(18),
+    bank_account    VARCHAR(20),
+    -- datos laborales
+    category        VARCHAR(100),
+    department      VARCHAR(100),
+    nss             VARCHAR(15),
+    salary          DECIMAL(12, 2)          DEFAULT 0,
+    work_start_date DATE                    DEFAULT NULL,
+    -- sesión
+    last_entry      DATETIME                DEFAULT NULL,
+    created_at      DATETIME                DEFAULT CURRENT_TIMESTAMP,
+    update_at       DATETIME                DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    delete_at       DATETIME                DEFAULT NULL
+);
+```
+
+<Tabs>
+  <Tab title="Información personal">
+    | Campo | Tipo | Descripción |
+    |-------|------|-------------|
+    | `name` | `VARCHAR(100)` | Nombre(s) del usuario |
+    | `surnames` | `VARCHAR(255)` | Apellidos |
+    | `curp` | `VARCHAR(20)` | Clave Única de Registro de Población |
+    | `birthdate` | `DATE` | Fecha de nacimiento |
+    | `address` | `VARCHAR(255)` | Domicilio |
+    | `phone` | `VARCHAR(50)` | Teléfono de contacto |
+    | `photo` | `VARCHAR(255)` | Ruta relativa a la foto de perfil |
+  </Tab>
+  <Tab title="Datos bancarios">
+    | Campo | Tipo | Descripción |
+    |-------|------|-------------|
+    | `bank_name` | `VARCHAR(100)` | Nombre del banco |
+    | `interbank_code` | `VARCHAR(18)` | CLABE interbancaria (18 dígitos) |
+    | `bank_account` | `VARCHAR(20)` | Número de cuenta bancaria |
+  </Tab>
+  <Tab title="Datos laborales">
+    | Campo | Tipo | Descripción |
+    |-------|------|-------------|
+    | `category` | `VARCHAR(100)` | Categoría o plaza del trabajador |
+    | `department` | `VARCHAR(100)` | Adscripción / departamento |
+    | `nss` | `VARCHAR(15)` | Número de Seguridad Social (IMSS) |
+    | `salary` | `DECIMAL(12,2)` | Salario base |
+    | `work_start_date` | `DATE` | Fecha de inicio de la relación laboral |
+  </Tab>
+</Tabs>
+
+---
+
+## Documentos de usuario
+
+La entidad `UserDocument` representa archivos cargados por el usuario para acreditar su afiliación y datos personales.
+
+```php
+final readonly class UserDocument
+{
+    public function __construct(
+        public int                 $id,
+        public int                 $userId,
+        public DocumentTypeEnum    $type,
+        public string              $filePath,
+        public DocumentStatusEnum  $status,
+        public ?string             $observations  = null,
+        public ?int                $validatedBy   = null,
+        public ?DateTimeImmutable  $createdAt     = null,
+    ) {}
+
+    public function isValidated(): bool
+    {
+        return $this->status === DocumentStatusEnum::Validado;
+    }
+}
+```
+
+### Tipos de documento (`DocumentTypeEnum`)
+
+| Caso | Valor en BD | Descripción |
+|------|-------------|-------------|
+| `Afiliacion` | `afiliacion` | Solicitud de afiliación sindical |
+| `Ine` | `ine` | Credencial para votar (INE/IFE) |
+| `ComprobanteDomicilio` | `comprobante_domicilio` | Comprobante de domicilio |
+| `Curp` | `curp` | Documento CURP oficial |
+| `ComprobantePago` | `comprobante_pago` | Último comprobante de pago de nómina |
+
+### Estados de documento (`DocumentStatusEnum`)
+
+| Caso | Valor en BD | Descripción |
+|------|-------------|-------------|
+| `Pending` | `pendiente` | Documento cargado, pendiente de revisión |
+| `Validate` | `validado` | Aprobado por el área administrativa |
+| `Rejected` | `rechazado` | Rechazado con observaciones |
+
+### Tabla `user_documents`
+
+```sql
+CREATE TABLE IF NOT EXISTS user_documents (
+    document_id   INT AUTO_INCREMENT PRIMARY KEY,
+    user_id       INT          NOT NULL,
+    document_type VARCHAR(100) NOT NULL, -- 'afiliacion', 'ine', 'comprobante_domicilio', ...
+    file_path     VARCHAR(255) NOT NULL,
+    status        VARCHAR(30)  NOT NULL DEFAULT 'pendiente',
+    observation   TEXT,
+    created_at    DATETIME              DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME              DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    validated_by  INT,                  -- user_id de quien validó
+    CONSTRAINT fk_document_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+    INDEX idx_user_document_type (user_id, document_type),
+    INDEX idx_status (status)
+);
+```
+
+<Warning>
+Un usuario solo es considerado completo (`User::isComplete() === true`) cuando tiene `curp` e `interbank_code` registrados. Los préstamos requieren un perfil completo para proceder.
+</Warning>

@@ -1,0 +1,59 @@
+---
+title: "Requisitos del sistema"
+description: "Software y extensiones necesarios para ejecutar el Portal Sindical SIUT-ITSM."
+---
+
+Antes de instalar el portal, verifica que tu entorno cumple con los siguientes requisitos.
+
+## Requisitos de software
+
+| Componente | Versión mínima | Notas |
+|---|---|---|
+| PHP | 8.3 | Versión requerida por `composer.json` (`^8.3`) |
+| Composer | 2.x | Gestor de dependencias de PHP |
+| MySQL / MariaDB | MySQL 8.0 / MariaDB 10.5+ | Motor de base de datos |
+| Servidor web | Apache 2.4+ / Nginx 1.18+ | O el servidor embebido de PHP para desarrollo |
+| Docker | 24+ (opcional) | Para la instalación en contenedores |
+| Docker Compose | v2 (opcional) | Requerido si usas el archivo `compose.yaml` |
+
+## Extensiones de PHP requeridas
+
+| Extensión | Propósito |
+|---|---|
+| `pdo` | Conexión a la base de datos MySQL / MariaDB |
+| `pdo_mysql` | Driver PDO específico para MySQL |
+| `intl` | Internacionalización y formato de fechas/números |
+| `zip` | Compresión y descompresión de archivos |
+| `gd` | Procesamiento de imágenes (requerido por dompdf) |
+
+## Verificar los requisitos
+
+Ejecuta el siguiente comando para comprobar la versión de PHP y las extensiones cargadas:
+
+```bash
+php -v
+php -m | grep -E 'pdo|intl|zip|gd'
+```
+
+Para verificar que PDO MySQL está disponible:
+
+```bash
+php -r "new PDO('mysql:host=localhost', 'root', '');"
+```
+
+## Instalar extensiones en Debian / Ubuntu
+
+```bash
+sudo apt-get update
+sudo apt-get install -y php8.3 php8.3-cli php8.3-pdo php8.3-mysql php8.3-intl php8.3-zip php8.3-gd
+```
+
+## Instalar extensiones en RHEL / Fedora
+
+```bash
+sudo dnf install -y php8.3 php8.3-pdo php8.3-mysqlnd php8.3-intl php8.3-zip php8.3-gd
+```
+
+<Info>
+  El `Dockerfile` incluido en el repositorio usa la imagen base `php:8.3-apache` e instala automáticamente `pdo_mysql` y `gd`, por lo que al usar Docker no necesitas instalar las extensiones manualmente.
+</Info>

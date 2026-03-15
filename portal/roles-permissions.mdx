@@ -1,0 +1,163 @@
+---
+title: Roles y permisos
+description: Descripción de los cinco roles de usuario del sistema y los recursos a los que cada uno tiene acceso dentro del portal.
+---
+
+El sistema gestiona el control de acceso mediante roles asignados a cada usuario en la columna `role` de la tabla `users`. El enum `RoleEnum` en `app/Shared/Domain/Enum/RoleEnum.php` define los valores válidos.
+
+```php
+enum RoleEnum: string
+{
+    case Lider          = "lider";
+    case Admin          = "administrador";
+    case Agremiado      = "agremiado";
+    case NoAgremiado    = "no_agremiado";
+    case Finanzas       = "finanzas";
+}
+```
+
+El rol por defecto al crear un usuario es `no_agremiado`:
+
+```sql
+role VARCHAR(20) NOT NULL DEFAULT 'no_agremiado'
+```
+
+## Roles disponibles
+
+<Tabs>
+  <Tab title="no_agremiado">
+    **Valor en base de datos:** `no_agremiado`
+
+    Usuario registrado que aún no ha completado su proceso de afiliación sindical. Tiene acceso mínimo al portal.
+
+    **Documentos permitidos:** INE, comprobante de domicilio y CURP (3 documentos según `DocumentHelper::resolveAllowedDocumentTypes`).
+
+    | Recurso | Acceso |
+    |---------|--------|
+    | Portal privado (`/portal/`) | Lectura (panel básico) |
+    | Perfil propio | Lectura y edición |
+    | Préstamos | Sin acceso |
+    | Gestión de usuarios | Sin acceso |
+    | Configuración | Sin acceso |
+    | Publicaciones internas | Sin acceso |
+    | Buzón | Sin acceso |
+  </Tab>
+
+  <Tab title="agremiado">
+    **Valor en base de datos:** `agremiado`
+
+    Miembro activo del sindicato. Tiene acceso a los servicios básicos: consulta de préstamos, publicaciones y documentos sindicales.
+
+    **Documentos permitidos:** Todos los documentos base más afiliación y comprobante de pago (5 documentos).
+
+    | Recurso | Acceso |
+    |---------|--------|
+    | Portal privado (`/portal/`) | Completo |
+    | Perfil propio | Lectura y edición |
+    | Solicitud de préstamos | Crear y consultar los propios |
+    | Publicaciones internas | Lectura |
+    | Transparencia | Lectura |
+    | Repositorios | Descarga |
+    | Formatos | Descarga |
+    | Acervos bibliográficos | Consulta |
+    | Gestión de usuarios | Sin acceso |
+    | Configuración | Sin acceso |
+  </Tab>
+
+  <Tab title="finanzas">
+    **Valor en base de datos:** `finanzas`
+
+    Secretario o responsable del área de finanzas del sindicato. Tiene acceso especializado al módulo de préstamos para revisión, aprobación y control financiero.
+
+    | Recurso | Acceso |
+    |---------|--------|
+    | Portal privado (`/portal/`) | Completo |
+    | Préstamos | Revisión, aprobación, generación de documentos |
+    | Firmas digitales en documentos de préstamo | Firmante (`finance_signatory`) |
+    | Amortización | Lectura y registro de pagos |
+    | Publicaciones internas | Lectura |
+    | Gestión de usuarios | Sin acceso completo |
+    | Configuración del sistema | Sin acceso |
+  </Tab>
+
+  <Tab title="lider">
+    **Valor en base de datos:** `lider`
+
+    Dirigente sindical. Tiene acceso de supervisión amplia sobre usuarios y préstamos, puede ver documentos de otros usuarios y autorizar reestructuraciones.
+
+    | Recurso | Acceso |
+    |---------|--------|
+    | Portal privado (`/portal/`) | Completo |
+    | Documentos de otros usuarios | Lectura (confirmado por `DocumentHelper::canViewOtherUserDocuments`) |
+    | Préstamos | Supervisión y autorización |
+    | Publicaciones | Creación y gestión |
+    | Gestión de usuarios | Lectura y supervisión |
+    | Configuración | Sin acceso total |
+  </Tab>
+
+  <Tab title="administrador">
+    **Valor en base de datos:** `administrador`
+
+    Administrador del sistema. Acceso completo a todas las secciones del portal, incluidas configuración, gestión de usuarios y todos los módulos.
+
+    | Recurso | Acceso |
+    |---------|--------|
+    | Portal privado (`/portal/`) | Completo |
+    | Gestión de usuarios | Crear, editar, desactivar |
+    | Documentos de otros usuarios | Lectura (`DocumentHelper::canViewOtherUserDocuments` → `true`) |
+    | Préstamos | Control total |
+    | Publicaciones | Creación, edición y eliminación |
+    | Configuración del sistema | Completo |
+    | Importación de datos (CLI) | Ejecución de comandos |
+  </Tab>
+</Tabs>
+
+## Aplicación del control de acceso
+
+El control de acceso se aplica en dos capas:
+
+### 1. Middleware de autenticación
+
+`AuthMiddleware` verifica que exista una sesión activa. Si no, lanza `UnauthorizedException` y el `MiddlewareRunner` redirige a `/cuentas/login.php`:
+
+```php
+$runner->runOrRedirect($middleware->auth());
+```
+
+### 2. Middleware de roles
+
+`RoleMiddleware` verifica que el rol del usuario en sesión sea uno de los roles permitidos. Si está autenticado pero no tiene el rol, lanza `ForbiddenException` y redirige a `/portal/acceso-denegado.php` (HTTP 403):
+
+```php
+$runner->runOrRedirect(
+    $middleware->role(RoleEnum::Finanzas, RoleEnum::Admin)
+);
+```
+
+El `MiddlewareFactory` encapsula la creación de ambos middlewares:
+
+```php
+final readonly class MiddlewareFactory
+{
+    public function auth(): AuthMiddleware { ... }
+    public function role(RoleEnum ...$roles): RoleMiddleware { ... }
+}
+```
+
+<Warning>
+  Si un usuario autenticado intenta acceder a un recurso sin el rol necesario, recibe HTTP 403 y es redirigido a la página de acceso denegado. No se revela información sobre el recurso.
+</Warning>
+
+## Tabla de roles en la base de datos
+
+```sql
+CREATE TABLE IF NOT EXISTS users (
+    user_id  INT AUTO_INCREMENT PRIMARY KEY,
+    email    VARCHAR(100) NOT NULL UNIQUE,
+    role     VARCHAR(20)  NOT NULL DEFAULT 'no_agremiado',
+    active   BOOLEAN               DEFAULT TRUE,
+    -- ...
+);
+```
+
+El campo `active` permite desactivar un usuario sin eliminarlo. Un usuario inactivo no puede iniciar sesión aunque sus credenciales sean válidas.

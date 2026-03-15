@@ -1,0 +1,174 @@
+---
+title: Contribuir al proyecto
+description: Guía para contribuir al repositorio SIUT-ITSM, desde la clonación hasta la apertura de un Pull Request, incluyendo estilo de código y convenciones de ramas.
+---
+
+## Flujo de contribución
+
+<Steps>
+  <Step title="Haz un fork del repositorio">
+    Ve al repositorio en GitHub y pulsa el botón **Fork** para crear una copia en tu cuenta. Luego clona tu fork localmente:
+
+    ```bash
+    git clone https://github.com/<tu-usuario>/ost-siut-itsm.git
+    cd ost-siut-itsm
+    ```
+  </Step>
+
+  <Step title="Instala las dependencias">
+    ```bash
+    composer install
+    ```
+
+    Para instalar también las dependencias de desarrollo (testing y minificación):
+
+    ```bash
+    composer install --dev
+    ```
+  </Step>
+
+  <Step title="Configura el entorno">
+    Copia el archivo de ejemplo de variables de entorno y ajusta los valores:
+
+    ```bash
+    cp .env.example .env
+    ```
+
+    Variables obligatorias según `Bootstrap.php`:
+
+    ```ini
+    APP_ENV=dev
+
+    DB_HOST=127.0.0.1
+    DB_NAME=siut_itsm
+    DB_USER=root
+    DB_PASSWORD=secret
+    DB_PORT=3306
+
+    MAILER_HOST=smtp.example.com
+    MAILER_USER=no-reply@example.com
+    MAILER_PASSWORD=secret
+    MAILER_PORT=465
+    MAILER_FROM_ADDRESS=no-reply@example.com
+    MAILER_FROM_NAME="SIUT-ITSM"
+    ```
+  </Step>
+
+  <Step title="Crea una rama de trabajo">
+    Crea tu rama desde `main` (o la rama de desarrollo activa) siguiendo las convenciones de nomenclatura del proyecto:
+
+    ```bash
+    git checkout main
+    git pull origin main
+    git checkout -b feat/nombre-descriptivo
+    ```
+
+    Consulta las [convenciones de nomenclatura de ramas](#convenciones-de-ramas) más adelante.
+  </Step>
+
+  <Step title="Realiza los cambios">
+    Implementa tu funcionalidad o corrección. Sigue las guías de estilo de código descritas abajo. Para probar el servidor de desarrollo:
+
+    ```bash
+    composer run servidor
+    # http://localhost:8888
+    ```
+  </Step>
+
+  <Step title="Escribe pruebas">
+    Añade pruebas unitarias o de integración para el código que escribiste y verifica que toda la suite pase:
+
+    ```bash
+    vendor/bin/pest
+    ```
+
+    Para pruebas que involucren lógica de dominio, coloca los tests en `tests/Unit/` siguiendo la misma estructura de namespaces que `app/`.
+  </Step>
+
+  <Step title="Confirma los cambios">
+    Usa mensajes de commit descriptivos en español o inglés, preferiblemente siguiendo el formato Conventional Commits:
+
+    ```bash
+    git add .
+    git commit -m "feat(prestamos): agregar cálculo de interés moratorio"
+    ```
+
+    Prefijos recomendados: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`.
+  </Step>
+
+  <Step title="Abre un Pull Request">
+    Sube tu rama a tu fork y abre un Pull Request contra la rama principal del repositorio original:
+
+    ```bash
+    git push origin feat/nombre-descriptivo
+    ```
+
+    En la descripción del PR incluye:
+    - Qué problema resuelve o qué funcionalidad añade.
+    - Cómo probar los cambios.
+    - Capturas de pantalla si aplica.
+  </Step>
+</Steps>
+
+## Convenciones de ramas
+
+| Prefijo | Uso | Ejemplo |
+|---------|-----|---------|
+| `feat/` | Nueva funcionalidad | `feat/exportar-reportes-pdf` |
+| `fix/` | Corrección de error | `fix/redireccion-post-login` |
+| `refactor/` | Mejora interna sin cambio de comportamiento | `refactor/middleware-runner` |
+| `test/` | Añadir o corregir pruebas | `test/document-helper` |
+| `docs/` | Cambios en documentación | `docs/guia-instalacion` |
+| `chore/` | Tareas de mantenimiento (deps, CI, etc.) | `chore/actualizar-phpmailer` |
+
+<Note>
+  Las ramas deben crearse desde `main` y mantenerse actualizadas haciendo `git rebase origin/main` antes de abrir el PR.
+</Note>
+
+## Estilo de código
+
+### PHP — `.editorconfig`
+
+El repositorio incluye un `.editorconfig` que establece las reglas básicas de formato aplicables en cualquier editor compatible:
+
+- Indentación: 4 espacios (no tabulaciones).
+- Final de línea: `LF`.
+- Codificación: `UTF-8`.
+- Nueva línea al final de archivo.
+
+### PHP — Prettier con plugin PHP
+
+El archivo `package.json` incluye `prettier` con `@prettier/plugin-php` para el formateo automático de archivos PHP y Latte:
+
+```bash
+# Instalar dependencias Node
+npm install
+
+# Formatear todos los archivos PHP y Latte
+npx prettier --write "**/*.{php,latte}"
+```
+
+### Reglas de estilo PHP
+
+- Usa `declare(strict_types=1)` en todos los archivos PHP de la aplicación.
+- Tipado completo en parámetros y valores de retorno.
+- Clases de un solo propósito: casos de uso (`UseCase`), value objects, entidades.
+- Inyección de dependencias a través del contenedor — no instanciar dependencias directamente con `new` dentro de clases de servicio.
+- Usa `readonly` en clases y propiedades cuando el estado no cambia tras la construcción.
+
+### Plantillas Latte
+
+- Las plantillas extienden siempre una plantilla base con `{extends}`.
+- El contenido principal va dentro del bloque `{block main}`.
+- Los componentes reutilizables deben extraerse a `templates/components/`.
+
+## Requerimientos para el PR
+
+<Warning>
+  Los Pull Requests sin pruebas para código nuevo de dominio o aplicación no serán aceptados. Toda lógica de negocio debe estar cubierta.
+</Warning>
+
+- [ ] Las pruebas existentes pasan (`vendor/bin/pest`).
+- [ ] El código nuevo tiene pruebas unitarias o de integración.
+- [ ] Los archivos están formateados según `.editorconfig` y Prettier.
+- [ ] La descripción del PR explica el **por qué** del cambio, no solo el **qué**.

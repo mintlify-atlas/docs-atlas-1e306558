@@ -1,0 +1,195 @@
+---
+title: "Módulo de configuración"
+description: "Personalización de la paleta de colores del portal sindical. Gestión de la entidad Color con validación hexadecimal y persistencia en base de datos."
+---
+
+## Descripción general
+
+`SettingModule` gestiona la configuración visual del portal. Actualmente expone dos casos de uso para leer y actualizar la paleta de colores del sistema, que se aplica mediante variables CSS en toda la interfaz.
+
+```php
+final class SettingModule extends AbstractModule
+{
+    protected const array REPOSITORIES = [
+        SettingRepositoryInterface::class => PdoSettingRepository::class,
+    ];
+
+    protected const array USE_CASES = [
+        GetColorUseCase::class,
+        UpdateColorUseCase::class,
+    ];
+}
+```
+
+---
+
+## Casos de uso
+
+### GetColorUseCase
+
+```php
+final readonly class GetColorUseCase
+{
+    public function __construct(
+        private SettingRepositoryInterface $repository,
+    ) {}
+
+    public function execute(): Color
+    {
+        return $this->repository->getColors() ?? new Color(
+            primary:   "#0d6efd",
+            secondary: "#6c757d",
+            success:   "#198754",
+            info:      "#0dcaf0",
+            warning:   "#ffc107",
+            danger:    "#dc3545",
+            light:     "#f8f9fa",
+            dark:      "#212529",
+        );
+    }
+}
+```
+
+Devuelve la configuración de colores almacenada en `system_colors`. Si la tabla no tiene registros, retorna los **valores por defecto de Bootstrap 5**. Esto garantiza que el portal siempre tenga una paleta válida aunque la configuración no se haya personalizado.
+
+### UpdateColorUseCase
+
+```php
+final readonly class UpdateColorUseCase
+{
+    public function __construct(
+        private SettingRepositoryInterface $repository,
+    ) {}
+
+    public function execute(UpdateColorCommand $command): void
+    {
+        $this->repository->updateColors($command->toColor());
+    }
+}
+```
+
+---
+
+## Comando: UpdateColorCommand
+
+```php
+final readonly class UpdateColorCommand
+{
+    private function __construct(
+        public string $primary,
+        public string $secondary,
+        public string $success,
+        public string $info,
+        public string $warning,
+        public string $danger,
+        public string $light,
+        public string $dark,
+        public string $white,
+        public string $body,
+        public string $bodyBackground,
+    ) {}
+
+    public static function fromRequestPayload(array $payload): self
+    public function toColor(): Color
+}
+```
+
+`fromRequestPayload()` lee los campos del `$_POST` usando las claves en español:
+
+| Clave en `$_POST` | Propiedad PHP | Descripción |
+|-------------------|---------------|-------------|
+| `primario` | `$primary` | Color principal del sindicato |
+| `secundario` | `$secondary` | Color secundario |
+| `exito` | `$success` | Indicadores de éxito |
+| `info` | `$info` | Mensajes informativos |
+| `advertencia` | `$warning` | Alertas y advertencias |
+| `peligro` | `$danger` | Errores y acciones destructivas |
+| `claro` | `$light` | Fondos claros |
+| `oscuro` | `$dark` | Fondos oscuros |
+| `blanco` | `$white` | Color blanco puro |
+| `cuerpo` | `$body` | Color de texto del cuerpo |
+| `fondo_cuerpo` | `$bodyBackground` | Fondo general de la página |
+
+<Warning>
+Todos los campos son **obligatorios**. Si cualquier campo llega vacío, `normalize()` lanza `InvalidArgumentException`. El valor se convierte a minúsculas antes de persistir.
+</Warning>
+
+---
+
+## Entidad Color
+
+```php
+final readonly class Color
+{
+    public function __construct(
+        public string $primary,
+        public string $secondary,
+        public string $success,
+        public string $info,
+        public string $warning,
+        public string $danger,
+        public string $light,
+        public string $dark,
+        public string $white           = "#ffffff",
+        public string $body            = "#212529",
+        public string $bodyBackground  = "#f8f9fa",
+    ) {}
+}
+```
+
+El constructor valida cada color con la expresión regular `/^#[0-9a-fA-F]{6}$/`. Si algún campo no es un color hexadecimal de 6 dígitos (ej. `#ff0000`), lanza `InvalidArgumentException`.
+
+---
+
+## Colores predeterminados del portal
+
+Los valores por defecto en `system_colors` reflejan la identidad visual del sindicato:
+
+| Variable | Defecto BD | Defecto fallback (código) |
+|----------|------------|---------------------------|
+| `primary` | `#611232` | `#0d6efd` |
+| `secondary` | `#a57f2c` | `#6c757d` |
+| `success` | `#38b44a` | `#198754` |
+| `info` | `#17a2b8` | `#0dcaf0` |
+| `warning` | `#efb73e` | `#ffc107` |
+| `danger` | `#df382c` | `#dc3545` |
+| `light` | `#e9ecef` | `#f8f9fa` |
+| `dark` | `#002f2a` | `#212529` |
+| `white` | `#ffffff` | `#ffffff` |
+| `body` | `#212529` | `#212529` |
+| `body_background` | `#f8f9fa` | `#f8f9fa` |
+
+---
+
+## Esquema de base de datos
+
+```sql
+CREATE TABLE IF NOT EXISTS system_colors (
+    id                INT     PRIMARY KEY DEFAULT 1,
+    c_primary         VARCHAR(7)  DEFAULT '#611232',
+    c_secondary       VARCHAR(7)  DEFAULT '#a57f2c',
+    c_success         VARCHAR(7)  DEFAULT '#38b44a',
+    c_info            VARCHAR(7)  DEFAULT '#17a2b8',
+    c_warning         VARCHAR(7)  DEFAULT '#efb73e',
+    c_danger          VARCHAR(7)  DEFAULT '#df382c',
+    c_light           VARCHAR(7)  DEFAULT '#e9ecef',
+    c_dark            VARCHAR(7)  DEFAULT '#002f2a',
+    c_white           VARCHAR(7)  DEFAULT '#ffffff',
+    c_body            VARCHAR(7)  DEFAULT '#212529',
+    c_body_background VARCHAR(7)  DEFAULT '#f8f9fa'
+);
+```
+
+<Info>
+La tabla usa `id = 1` como clave primaria fija. No es un catálogo multi-tenant; hay exactamente una fila de configuración para toda la instancia del portal.
+</Info>
+
+---
+
+## Página del portal
+
+La configuración de colores se gestiona desde `/portal/configuracion/colores.php`. Solo los usuarios con rol `administrador` pueden acceder a esta sección.
+
+<Tip>
+Después de actualizar los colores, la paleta se aplica en tiempo real a través de variables CSS generadas dinámicamente. No es necesario compilar ni reiniciar el servidor.
+</Tip>

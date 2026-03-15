@@ -1,0 +1,307 @@
+---
+title: "Módulo de préstamos"
+description: "Simulación financiera, solicitud, flujo de aprobación, tabla de amortización, generación de documentos legales en PDF y registro de pagos para préstamos sindicales."
+---
+
+## Descripción general
+
+`LoanModule` gestiona la operativa completa de préstamos sindicales. Actualmente su contenedor DI no registra bindings adicionales (los servicios se instancian directamente en las páginas del portal), pero la lógica financiera está encapsulada en clases de dominio y aplicación reutilizables.
+
+```php
+class LoanModule implements ModuleInterface
+{
+    public function register(ContainerBuilder $container): void
+    {
+        $container->addDefinitions([]);
+    }
+}
+```
+
+---
+
+## Servicios de cálculo financiero
+
+### SimuladorService
+
+Orquesta la simulación eligiendo la calculadora correcta según el tipo de préstamo:
+
+```php
+final readonly class SimuladorService
+{
+    public function __construct(
+        private CalculadoraCompuesto      $calculadoraCompuesto,
+        private CalculadoraIntereSimple   $calculadoraSimple,
+    ) {}
+
+    /**
+     * @return array{
+     *   corrida:  AmortizacionCorridaDTO[],
+     *   totales: array{totalInteres: float, totalCapital: float, totalPago: float}
+     * }
+     */
+    public function simular(
+        float              $monto,
+        Intereses          $tipoInteres,
+        int                $periodos,
+        bool               $esPeriodico = false,
+        ?DateTimeImmutable $fechaInicio = null,
+        array              $options     = [],
+    ): array
+
+    public function formatearCorrida(array $corrida): array
+}
+```
+
+- **`$esPeriodico = true`** → usa `CalculadoraSimpleAleman` (método alemán: cuota de capital constante + interés variable sobre saldo).
+- **`$esPeriodico = false`** → usa `CalculadoraCompuesto` (anualidad: cuota total constante con interés compuesto).
+
+### CalculadoraSimpleAleman (método alemán)
+
+```php
+class CalculadoraSimpleAleman
+{
+    /** @return AmortizacionCorridaDTO[] */
+    public function generarCorrida(
+        float              $capital,
+        float              $tasa,        // tasa anual (ej. 3 o 0.03)
+        int                $periodos,
+        DateTimeImmutable  $fechaInicio,
+        UnidadEnum         $unidad   = UnidadEnum::Quincena,
+        array              $options  = [],
+    ): array
+}
+```
+
+Calcula amortización con **capital soluto constante** (`capital / periodos`) e interés variable sobre el saldo decreciente. Soporta primer periodo parcial alineado al calendario (quincena o fin de mes).
+
+Tasas por periodo según unidad:
+
+| Unidad | Divisor de tasa anual |
+|--------|----------------------|
+| Mes | 12 |
+| Quincena | 24 |
+| Semana | 52 |
+| Día | 365 |
+
+### CalculadoraCompuesto (anualidad)
+
+```php
+class CalculadoraCompuesto
+{
+    /** @return AmortizacionCorridaDTO[] */
+    public function generarCorrida(
+        float              $capital,
+        float              $tasa,
+        int                $periodos,
+        DateTimeImmutable  $fechaInicio,
+        UnidadEnum         $unidad  = UnidadEnum::Quincena,
+        array              $options = [],
+    ): array
+}
+```
+
+Calcula la **cuota constante** (anualidad) mediante la fórmula:
+
+```
+cuota = (capital × r) / (1 − (1 + r)^(−periodos))
+```
+
+Donde `r` es la tasa directamente aplicada al periodo. El último periodo ajusta el capital soluto al saldo restante para evitar diferencias por redondeo.
+
+### AmortizacionCorridaDTO
+
+```php
+final readonly class AmortizacionCorridaDTO
+{
+    public function __construct(
+        public DateTimeImmutable $fechaPago,
+        public float             $capitalSoluto,
+        public float             $interes,
+        public float             $valor,    // cuota total del periodo
+        public float             $saldo,    // saldo después del pago
+    ) {}
+}
+```
+
+### UnidadEnum
+
+```php
+enum UnidadEnum
+{
+    case Dia;
+    case Semana;
+    case Mes;
+    case Quincena;
+}
+```
+
+---
+
+## Flujo del préstamo
+
+<Steps>
+  <Step title="Simulación">
+    El usuario accede a `/portal/prestamos/simulador.php`. Ingresa monto, tasa, número de quincenas y si el préstamo es periódico (sobre nómina) o no periódico (sobre prestaciones). `SimuladorService::simular()` devuelve la corrida completa y los totales. El portal muestra la tabla de amortización antes de que el usuario decida solicitar.
+  </Step>
+  <Step title="Solicitud">
+    Desde `/portal/prestamos/solicitar.php` el usuario confirma los datos y adjunta la documentación requerida. Se crea un registro en `loans` con `status = 'borrador'` y se genera el folio automático (`SIN-2025-001`).
+  </Step>
+  <Step title="Revisión de documentos">
+    El área de finanzas revisa los documentos adjuntos. El status transiciona. Se registra `document_review_date` en `loans`.
+  </Step>
+  <Step title="Aprobación">
+    El comité autoriza el préstamo. Se registra `approval_date`, `approved_amount` y `applied_interest_rate`. Se genera la tabla de amortización definitiva en `loan_amortization`.
+  </Step>
+  <Step title="Generación de documentos legales">
+    Se generan los documentos legales (pagaré, contrato) en PDF. Se registra `document_generation_date` y la ruta del PDF en `loan_legal_documents`.
+  </Step>
+  <Step title="Firma y validación">
+    El usuario firma los documentos y los sube al portal. Finanzas valida las firmas. Se registra `signature_validation_date`.
+  </Step>
+  <Step title="Desembolso">
+    Se deposita el monto aprobado. Se registra `disbursement_date` y comienza el devengamiento de intereses.
+  </Step>
+  <Step title="Pagos regulares">
+    Cada quincena se registra el pago en `loan_amortization`, actualizando `actual_payment_date`, `actual_paid_amount` y `outstanding_balance` en `loans`.
+  </Step>
+</Steps>
+
+---
+
+## Páginas del portal
+
+<CardGroup cols={2}>
+  <Card title="Simulador" icon="calculator">
+    Calcula la tabla de amortización interactiva. Permite comparar métodos (alemán vs. anualidad) antes de solicitar. Disponible en `/portal/prestamos/simulador.php`.
+  </Card>
+  <Card title="Solicitar" icon="file-signature">
+    Formulario de solicitud formal con carga de documentos y confirmación de términos. Disponible en `/portal/prestamos/solicitar.php`.
+  </Card>
+  <Card title="Préstamos activos" icon="list-check">
+    Muestra al agremiado sus préstamos activos, saldo pendiente, próximos pagos y estado general. Disponible en `/portal/prestamos/activos.php`.
+  </Card>
+  <Card title="PDF simulados" icon="file-pdf">
+    Genera en PDF la corrida de amortización simulada para que el usuario la revise offline. Disponible en `/portal/prestamos/pdf-simulados.php`.
+  </Card>
+</CardGroup>
+
+---
+
+## Esquema de base de datos
+
+<Accordion title="Tabla loans">
+
+```sql
+CREATE TABLE IF NOT EXISTS loans (
+    loan_id                     INT AUTO_INCREMENT PRIMARY KEY,
+    user_id                     INT            NOT NULL,
+    folio                       VARCHAR(50)    UNIQUE,      -- SIN-2025-001
+    requested_amount            DECIMAL(10,2)  NOT NULL,
+    approved_amount             DECIMAL(10,2),
+    applied_interest_rate       DECIMAL(5,2)   NOT NULL,
+    daily_default_rate          DECIMAL(5,4),
+    estimated_total_to_pay      DECIMAL(10,2),
+    outstanding_balance         DECIMAL(10,2),
+    term_months                 INT,
+    term_fortnights             INT,
+    first_payment_date          DATE,
+    last_scheduled_payment_date DATE,
+    -- fechas del workflow
+    application_date            DATETIME DEFAULT CURRENT_TIMESTAMP,
+    document_review_date        DATETIME,
+    approval_date               DATETIME,
+    document_generation_date    DATETIME,
+    signature_validation_date   DATETIME,
+    disbursement_date           DATETIME,
+    total_liquidation_date      DATETIME,
+    status                      VARCHAR(30) NOT NULL DEFAULT 'borrador',
+    original_loan_id            INT,         -- reestructuraciones
+    rejection_reason            TEXT,
+    admin_observations          TEXT,
+    finance_signatory           VARCHAR(255),
+    lender_signatory            VARCHAR(255),
+    requires_restructuring      BOOLEAN DEFAULT FALSE,
+    created_by                  INT,
+    deletion_date               DATETIME DEFAULT NULL
+);
+```
+
+</Accordion>
+
+<Accordion title="Tabla loan_amortization">
+
+```sql
+CREATE TABLE IF NOT EXISTS loan_amortization (
+    amortization_id         INT AUTO_INCREMENT PRIMARY KEY,
+    loan_id                 INT            NOT NULL,
+    payment_number          INT            NOT NULL,
+    income_type_id          INT            NOT NULL,
+    scheduled_date          DATE           NOT NULL,
+    initial_balance         DECIMAL(10,2)  NOT NULL,
+    principal               DECIMAL(10,2)  NOT NULL,
+    ordinary_interest       DECIMAL(10,2)  NOT NULL,
+    total_scheduled_payment DECIMAL(10,2)  NOT NULL,
+    final_balance           DECIMAL(10,2)  NOT NULL,
+    payment_status          VARCHAR(30)    NOT NULL DEFAULT 'pendiente',
+    actual_payment_date     DATETIME,
+    actual_paid_amount      DECIMAL(10,2)  DEFAULT 0,
+    days_overdue            INT            DEFAULT 0,
+    generated_default_interest DECIMAL(10,2) DEFAULT 0,
+    paid_by                 INT,
+    payment_receipt         VARCHAR(255),
+    table_version           INT            DEFAULT 1,
+    active                  BOOLEAN        DEFAULT TRUE
+);
+```
+
+</Accordion>
+
+<Accordion title="Tabla loan_legal_documents">
+
+```sql
+CREATE TABLE IF NOT EXISTS loan_legal_documents (
+    legal_doc_id                INT AUTO_INCREMENT PRIMARY KEY,
+    loan_id                     INT          NOT NULL,
+    document_type               VARCHAR(50)  NOT NULL,
+    file_path                   VARCHAR(255) NOT NULL,
+    version                     INT          DEFAULT 1,
+    requires_user_signature     BOOLEAN      DEFAULT FALSE,
+    user_signature_url          VARCHAR(255),
+    user_signature_date         DATETIME,
+    requires_finance_validation BOOLEAN      DEFAULT FALSE,
+    validated_by_finance        BOOLEAN      DEFAULT FALSE,
+    validated_by                INT,
+    validation_date             DATETIME,
+    validation_observations     TEXT,
+    generation_date             DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    generated_by                INT
+);
+```
+
+</Accordion>
+
+<Accordion title="Tabla loan_restructurings">
+
+```sql
+CREATE TABLE IF NOT EXISTS loan_restructurings (
+    restructuring_id             INT AUTO_INCREMENT PRIMARY KEY,
+    original_loan_id             INT            NOT NULL,
+    new_loan_id                  INT            NOT NULL,
+    reason                       VARCHAR(35)    NOT NULL,
+    original_outstanding_balance DECIMAL(10,2)  NOT NULL,
+    pending_interest             DECIMAL(10,2)  NOT NULL,
+    pending_default_interest     DECIMAL(10,2)  NOT NULL,
+    new_total_amount             DECIMAL(10,2)  NOT NULL,
+    new_interest_rate            DECIMAL(5,2),
+    new_term_fortnights          INT,
+    restructuring_date           DATETIME DEFAULT CURRENT_TIMESTAMP,
+    authorized_by                INT,
+    observations                 TEXT
+);
+```
+
+</Accordion>
+
+<Note>
+Los préstamos usan un sistema de **configuración de pagos** (`loan_payment_configuration`) que permite mezclar fuentes de ingreso: nómina quincenal (método alemán, `interest_method = 'simple_aleman'`) y prestaciones anuales como aguinaldo o bonos (interés compuesto, `interest_method = 'compuesto'`).
+</Note>

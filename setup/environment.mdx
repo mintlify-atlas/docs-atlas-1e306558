@@ -1,0 +1,141 @@
+---
+title: "Variables de entorno"
+description: "Referencia completa de todas las variables definidas en .env.example para el Portal Sindical SIUT-ITSM."
+---
+
+El portal utiliza [vlucas/phpdotenv](https://github.com/vlucas/phpdotenv) para cargar la configuración desde un archivo `.env` en la raíz del proyecto. Copia `.env.example` a `.env` antes de ejecutar la aplicación.
+
+```bash
+cp .env.example .env
+```
+
+---
+
+## Base de datos
+
+<ParamField path="DB_HOST" type="string" required>
+  Nombre de host o dirección IP del servidor MySQL / MariaDB.
+
+  **Ejemplo:** `localhost`  
+  **Docker:** usa el nombre del servicio, p. ej. `db`
+</ParamField>
+
+<ParamField path="DB_NAME" type="string" required>
+  Nombre de la base de datos que utilizará la aplicación.
+
+  **Ejemplo:** `database_name`
+</ParamField>
+
+<ParamField path="DB_USER" type="string" required>
+  Usuario de MySQL / MariaDB con permisos sobre `DB_NAME`.
+
+  **Ejemplo:** `username`
+</ParamField>
+
+<ParamField path="DB_PASSWORD" type="string" required>
+  Contraseña del usuario `DB_USER`.
+
+  **Ejemplo:** `password`
+</ParamField>
+
+<ParamField path="DB_PORT" type="integer" default="3306">
+  Puerto TCP en el que escucha el servidor de base de datos.
+
+  **Valor por defecto:** `3306`
+</ParamField>
+
+---
+
+## Correo (Mailer)
+
+<ParamField path="MAILER_HOST" type="string" required>
+  Hostname del servidor SMTP utilizado para el envío de correos con PHPMailer.
+
+  **Ejemplo:** `smtp.example.com`
+</ParamField>
+
+<ParamField path="MAILER_USER" type="string" required>
+  Usuario de autenticación SMTP.
+
+  **Ejemplo:** `example@mail.com`
+</ParamField>
+
+<ParamField path="MAILER_PASSWORD" type="string" required>
+  Contraseña de autenticación SMTP.
+
+  **Ejemplo:** `password`
+</ParamField>
+
+<ParamField path="MAILER_PORT" type="integer" default="465">
+  Puerto del servidor SMTP. Los valores comunes son `465` (SSL) y `587` (TLS/STARTTLS).
+
+  **Valor por defecto:** `465`
+</ParamField>
+
+<ParamField path="MAILER_FROM_ADDRESS" type="string" required>
+  Dirección de correo que aparecerá en el campo `From` de todos los mensajes enviados.
+
+  **Ejemplo:** `example@mail.com`
+</ParamField>
+
+<ParamField path="MAILER_FROM_NAME" type="string" default="SIUTITSM">
+  Nombre del remitente que aparecerá junto a `MAILER_FROM_ADDRESS`.
+
+  **Valor por defecto:** `SIUTITSM`
+</ParamField>
+
+<ParamField path="MAILER_ADMIN_NOTIFICATIONS" type="string" required>
+  Dirección de correo que recibe las notificaciones administrativas del sistema (nuevos registros, alertas, etc.).
+
+  **Ejemplo:** `admin@mail.com`
+</ParamField>
+
+---
+
+## Aplicación
+
+<ParamField path="APP_ENV" type="string" default="dev">
+  Entorno de ejecución. Controla el nivel de detalle de errores y logs.
+
+  | Valor | Comportamiento |
+  |---|---|
+  | `dev` | Muestra errores detallados, logs verbosos |
+  | `prod` | Oculta errores al usuario, logs de nivel `error` únicamente |
+</ParamField>
+
+<ParamField path="BASE_URL" type="string" required>
+  URL base de la aplicación, sin barra final. Se usa para construir enlaces absolutos (correos, redirecciones, generación de PDF).
+
+  **Ejemplo local:** `http://localhost`  
+  **Ejemplo producción:** `https://siut-itsm.ejemplo.mx`
+</ParamField>
+
+---
+
+## Archivo `.env` de ejemplo completo
+
+```ini
+# Base de datos
+DB_HOST=localhost
+DB_NAME=database_name
+DB_USER=username
+DB_PASSWORD=password
+DB_PORT=3306
+
+# Mailer
+MAILER_HOST=smtp.example.com
+MAILER_USER=example@mail.com
+MAILER_PASSWORD=password
+MAILER_PORT=465
+MAILER_FROM_ADDRESS=example@mail.com
+MAILER_FROM_NAME=SIUTITSM
+MAILER_ADMIN_NOTIFICATIONS=admin@mail.com
+
+# Aplicación
+APP_ENV=dev
+BASE_URL=http://localhost
+```
+
+<Warning>
+  Nunca confirmes el archivo `.env` en el control de versiones. El repositorio ya incluye `.env` en `.gitignore`. Asegúrate de que los permisos del archivo sean restrictivos en producción: `chmod 600 .env`.
+</Warning>

@@ -1,0 +1,106 @@
+---
+title: Descripción general del portal
+description: "Visión general de las dos áreas del sistema SIUT-ITSM: la zona pública de acceso libre y el portal privado reservado para usuarios autenticados."
+---
+
+El sistema SIUT-ITSM está organizado en dos grandes áreas bien diferenciadas: una **zona pública** accesible sin autenticación y un **portal privado** que requiere sesión activa.
+
+## Zona pública (`/`)
+
+La zona pública es servida desde `public/index.php` mediante el motor de plantillas Latte. No requiere autenticación y expone las siguientes páginas:
+
+| Página | Archivo | Descripción |
+|--------|---------|-------------|
+| Inicio | `public/index.php` | Página principal del sindicato |
+| Acerca | `public/acerca.php` | Información institucional del SIUT-ITSM |
+| Publicaciones | `public/publicaciones/` | Noticias y avisos públicos |
+| Transparencia | `public/transparencia.php` | Información de transparencia sindical |
+| Contacto | `public/contacto.php` | Formulario de contacto |
+| Dudas | `public/dudas.php` | Preguntas frecuentes |
+
+<Note>
+  Las páginas de la zona pública usan la plantilla base `templates/@landing.latte`, que incluye el encabezado `@landing.header.latte` y es diferente del layout del portal privado.
+</Note>
+
+## Portal privado (`/portal/`)
+
+El portal privado requiere autenticación. Cada petición a una página del portal pasa por el middleware `AuthMiddleware`, que redirige a `/cuentas/login.php` si la sesión no está activa. Si el usuario no tiene los permisos de rol requeridos, el `RoleMiddleware` redirige a `/portal/acceso-denegado.php` con HTTP 403.
+
+La ruta de entrada es `public/portal/index.php`, que obtiene el usuario autenticado desde `UserProviderInterface` y renderiza `index.latte` con los datos de sesión.
+
+### Secciones del portal
+
+<CardGroup cols={2}>
+  <Card title="Inicio" icon="house">
+    Panel de bienvenida personalizado según el rol del usuario. Muestra las últimas publicaciones y accesos rápidos.
+  </Card>
+  <Card title="Usuarios" icon="users">
+    Gestión de miembros del sindicato. Accesible para roles con privilegios administrativos.
+  </Card>
+  <Card title="Préstamos" icon="hand-holding-dollar">
+    Solicitud, revisión, aprobación y seguimiento de préstamos sindicales con tabla de amortización.
+  </Card>
+  <Card title="Publicaciones" icon="newspaper">
+    Creación y administración de noticias, avisos y comunicados internos.
+  </Card>
+  <Card title="Repositorios" icon="folder-open">
+    Almacenamiento y descarga de documentos internos del sindicato.
+  </Card>
+  <Card title="Transparencia" icon="scale-balanced">
+    Documentos y reportes de transparencia para consulta de agremiados.
+  </Card>
+  <Card title="Buzón" icon="envelope">
+    Sistema de mensajería y notificaciones internas.
+  </Card>
+  <Card title="Configuración" icon="gear">
+    Parámetros del sistema: colores institucionales, datos del sindicato y ajustes generales.
+  </Card>
+  <Card title="Formatos" icon="file-lines">
+    Plantillas y formatos oficiales descargables del sindicato.
+  </Card>
+  <Card title="Acervos bibliográficos" icon="book">
+    Catálogo de la biblioteca sindical con recursos disponibles para agremiados.
+  </Card>
+</CardGroup>
+
+## Flujo de autenticación
+
+Cada archivo `*.php` en el portal privado sigue el mismo patrón de arranque:
+
+```php
+require_once __DIR__ . "/../../bootstrap.php";
+
+$container = Bootstrap::buildContainer();
+
+$middleware = $container->get(MiddlewareFactory::class);
+$runner     = $container->get(MiddlewareRunner::class);
+
+$runner->runOrRedirect($middleware->auth());
+```
+
+Este fragmento construye el contenedor DI, obtiene el factory de middlewares y ejecuta el guard de autenticación antes de que se procese cualquier lógica de negocio. Para rutas que requieren un rol específico se usa `$middleware->role(RoleEnum::Finanzas)` o cualquier combinación de roles.
+
+## Estructura de directorios relevante
+
+```
+public/
+├── index.php                   # Entrada zona pública
+├── acerca.php
+├── contacto.php
+├── dudas.php
+├── publicaciones/
+├── transparencia.php
+└── portal/
+    ├── index.php               # Entrada portal privado
+    ├── acceso-denegado.php     # Página 403
+    ├── usuarios/
+    ├── prestamos/
+    ├── publicaciones/
+    ├── repositorios/
+    ├── transparencia/
+    ├── buzon/
+    ├── configuracion/
+    ├── formatos/
+    ├── perfiles/
+    └── acervos-bibliograficos/
+```

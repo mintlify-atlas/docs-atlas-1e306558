@@ -1,0 +1,140 @@
+---
+title: Paneles de control
+description: Descripción de las vistas de inicio personalizadas que cada rol ve al acceder al portal privado.
+---
+
+Al ingresar al portal privado (`/portal/`), el sistema renderiza el panel de control correspondiente al rol del usuario autenticado. La selección de la vista se realiza en `public/portal/index.php`, que pasa el objeto `$user` (obtenido desde `UserProviderInterface`) a la plantilla `index.latte`.
+
+```php
+$userProvider = $container->get(UserProviderInterface::class);
+$user = $userProvider->get();
+
+$renderer->render(__DIR__ . "/index.latte", [
+    "authUser" => $user,
+]);
+```
+
+La plantilla base del portal es `templates/@portal.latte`, que incluye la barra lateral (`@portal.sidebar.latte`) y la barra de navegación superior (`@portal.navbar.latte`).
+
+## Vista general (todos los roles)
+
+El archivo `index.latte` define el bloque `{block main}` que es común a todos los usuarios autenticados. Muestra un encabezado de bienvenida con animación y una columna con las **últimas publicaciones** del sindicato en formato de lista.
+
+```latte
+{extends ../../templates/@portal.latte}
+
+{block main}
+  <div class="p-4 p-md-5 mb-4 text-white rounded bg-primary animate__animated animate__fadeIn">
+    <div class="col-md-6 px-0">
+      <h1 class="display-4 fst-italic">Bienvenido</h1>
+      <p class="lead my-3">
+        Al portal del Sindicato Único de Trabajadores del Instituto
+        Tecnológico Superior de Macuspana.
+      </p>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col col-12 col-md-6">
+      <h4 class="fst-italic">Últimas publicaciones</h4>
+      <div class="list-group">...</div>
+    </div>
+  </div>
+{/block}
+```
+
+## Paneles específicos por rol
+
+Los archivos `index.<rol>.latte` están reservados para sobrescribir o ampliar el panel con contenido exclusivo de cada rol. Actualmente la plantilla base es compartida y los archivos específicos por rol son extensiones vacías listas para implementación futura.
+
+<Tabs>
+  <Tab title="no_agremiado">
+    **Archivo:** `public/portal/index.no_agremiado.latte`
+
+    El usuario no agremiado ve el panel de bienvenida estándar. Debido a su acceso limitado, la barra lateral muestra únicamente las opciones disponibles para su rol:
+
+    - Inicio
+    - Perfil personal
+
+    <Note>
+      El panel de `no_agremiado` está orientado a guiar al usuario en el proceso de afiliación. En versiones futuras puede incluir el estado de sus documentos pendientes de validación.
+    </Note>
+  </Tab>
+
+  <Tab title="agremiado">
+    **Archivo:** `public/portal/index.agremiado.latte`
+
+    El agremiado accede al panel completo de miembro activo. La barra lateral expone:
+
+    - Inicio (con últimas publicaciones)
+    - Préstamos (consulta y solicitud)
+    - Publicaciones internas
+    - Repositorios
+    - Transparencia
+    - Buzón
+    - Formatos
+    - Acervos bibliográficos
+
+    El widget de **últimas publicaciones** en el inicio muestra los avisos y comunicados más recientes publicados por la directiva.
+  </Tab>
+
+  <Tab title="finanzas">
+    **Archivo:** `public/portal/index.finanzas.latte`
+
+    El responsable de finanzas tiene un panel enfocado en el seguimiento financiero del sindicato:
+
+    - Inicio con acceso directo al módulo de préstamos
+    - Solicitudes de préstamo pendientes de revisión
+    - Préstamos en proceso de aprobación y generación de documentos
+    - Registro de pagos de amortización
+
+    <Tip>
+      El campo `finance_signatory` en la tabla `loans` almacena el nombre del secretario de finanzas que firma los documentos generados para cada préstamo.
+    </Tip>
+  </Tab>
+
+  <Tab title="lider">
+    **Archivo:** `public/portal/index.lider.latte`
+
+    El líder sindical tiene visibilidad amplia sobre la operación:
+
+    - Inicio con resumen de actividad general
+    - Gestión y supervisión de usuarios del sindicato
+    - Supervisión de préstamos activos y en proceso
+    - Publicaciones (creación y gestión)
+    - Autorización de reestructuraciones de préstamos
+    - Documentos de transparencia
+
+    Puede consultar documentos de cualquier usuario gracias a `DocumentHelper::canViewOtherUserDocuments(RoleEnum::Lider)` que retorna `true`.
+  </Tab>
+
+  <Tab title="administrador">
+    **Archivo:** `public/portal/index.lider.latte` (comparte layout de supervisión)
+
+    El administrador del sistema tiene acceso total:
+
+    - Inicio con métricas y actividad reciente
+    - Gestión completa de usuarios (crear, editar, desactivar)
+    - Control total de préstamos
+    - Publicaciones (crear, editar, eliminar)
+    - Configuración del sistema (colores institucionales, parámetros globales)
+    - Importación de datos mediante comandos CLI
+
+    Al igual que el líder, `DocumentHelper::canViewOtherUserDocuments(RoleEnum::Admin)` retorna `true`.
+  </Tab>
+</Tabs>
+
+## Barra lateral y navegación
+
+La barra lateral (`templates/@portal.sidebar.latte`) y la barra de navegación superior (`templates/@portal.navbar.latte`) son compartidas por todos los roles. La visibilidad de cada elemento del menú se controla mediante condicionales Latte que evalúan `$authUser->role` para mostrar u ocultar secciones según el rol activo.
+
+## Página de acceso denegado
+
+Cuando un usuario autenticado intenta acceder a un recurso para el que no tiene permisos, es redirigido a `public/portal/acceso-denegado.php`, que devuelve HTTP 403 y renderiza `acceso-denegado.latte`:
+
+```php
+http_response_code(403);
+$renderer->render("./acceso-denegado.latte");
+```
+
+Esta página también está protegida por `AuthMiddleware`, por lo que un usuario no autenticado que llegue a ella será redirigido al login.

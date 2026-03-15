@@ -1,0 +1,174 @@
+---
+title: Comandos CLI
+description: "Referencia de los scripts de línea de comandos disponibles en el proyecto: importación de catálogos postales, importación de usuarios y utilidades de desarrollo."
+---
+
+El proyecto incluye scripts PHP en el directorio `commands/` para operaciones administrativas que se ejecutan fuera del ciclo de petición HTTP, así como scripts de `composer` para tareas de desarrollo.
+
+## `importar-direcciones.php`
+
+Importa el catálogo nacional de códigos postales del SEPOMEX a la tabla `localidades` de la base de datos. Espera el archivo ZIP oficial de descarga de códigos postales.
+
+### Uso
+
+```bash
+php commands/importar-direcciones.php --path=/ruta/al/archivo/CP.zip
+```
+
+### Opciones
+
+| Opción | Requerida | Descripción |
+|--------|-----------|-------------|
+| `--path` | Sí | Ruta absoluta o relativa al archivo `CP.zip` de SEPOMEX |
+
+### Comportamiento
+
+<Steps>
+  <Step title="Validación del archivo">
+    Verifica que `--path` apunte a un archivo existente y legible. Si no, el script termina con un mensaje de uso.
+  </Step>
+  <Step title="Extracción del ZIP">
+    Copia el ZIP a un directorio temporal único (`sys_get_temp_dir()/cp_import_<uniqid>/`) y lo descomprime. Busca el archivo `CPdescarga.txt` dentro del ZIP.
+  </Step>
+  <Step title="Procesamiento del archivo de datos">
+    Lee el archivo `CPdescarga.txt` línea a línea (delimitado por `|`), omitiendo las primeras 2 líneas de encabezado. Normaliza cada registro con transliteración Unicode → ASCII usando `Transliterator::create('Any-Latin; Latin-ASCII; Upper()')`. Los campos extraídos son: `cp` (col. 0), `colonia` (col. 1), `localidad` (col. 3), `ciudad` (col. 5), `estado` (col. 4).
+  </Step>
+  <Step title="Volcado a CSV temporal">
+    Escribe todos los registros normalizados en un archivo CSV temporal (`datos.csv`) para aprovechar `LOAD DATA INFILE`. Muestra un punto de progreso cada 10 000 registros.
+  </Step>
+  <Step title="Importación a la base de datos">
+    Trunca la tabla `localidades` y aplica optimizaciones de inserción masiva:
+
+    ```sql
+    SET autocommit=0;
+    SET unique_checks=0;
+    SET foreign_key_checks=0;
+    ```
+
+    Intenta importar con `LOAD DATA LOCAL INFILE` (más rápido). Si no está disponible, recurre a la función `cargarDesdeCsv()` que inserta en lotes de 5 000 registros usando prepared statements.
+  </Step>
+  <Step title="Creación de índices">
+    Recrear el índice `idx_cp` sobre la columna `cp` y restaura `autocommit`, `unique_checks` y `foreign_key_checks`.
+  </Step>
+  <Step title="Limpieza">
+    El directorio temporal se elimina automáticamente mediante `register_shutdown_function`, independientemente de si el proceso termina con éxito o error.
+  </Step>
+</Steps>
+
+### Esquema generado
+
+```sql
+CREATE TABLE IF NOT EXISTS localidades (
+    id        INT AUTO_INCREMENT PRIMARY KEY,
+    cp        VARCHAR(10)  NOT NULL,
+    colonia   VARCHAR(255) NOT NULL,
+    localidad VARCHAR(255) NOT NULL,
+    ciudad    VARCHAR(255) NOT NULL,
+    estado    VARCHAR(255) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+### Ejemplo de salida
+
+```
+Procesando archivo de datos...
+..........
+100000 registros procesados.
+Importando a base de datos...
+Importación completada con LOAD DATA LOCAL INFILE.
+Creando índices...
+
+ÉXITO: 100000 registros importados.
+```
+
+---
+
+## `importar-usuarios.php`
+
+Importa usuarios desde un archivo CSV y los crea en la base de datos usando el caso de uso `CreateUserUseCase`. Útil para migraciones masivas o incorporación inicial de agremiados.
+
+### Uso
+
+```bash
+php commands/importar-usuarios.php --path=/ruta/al/archivo.csv [--default-password=temporal]
+```
+
+### Opciones
+
+| Opción | Requerida | Valor por defecto | Descripción |
+|--------|-----------|-------------------|-------------|
+| `--path` | Sí | — | Ruta al archivo CSV de usuarios |
+| `--default-password` | No | `temporal` | Contraseña asignada a todos los usuarios importados |
+
+### Formato del CSV
+
+El archivo debe incluir una fila de encabezado con las siguientes columnas:
+
+| Columna | Requerida | Descripción |
+|---------|-----------|-------------|
+| `nombre` | Sí | Nombre(s) del usuario |
+| `apellidos` | Sí | Apellidos del usuario |
+| `email` | No | Correo electrónico. Si está vacío, se genera uno de la forma `nombre.apellidos.<fila>@import.local` |
+| `rol` | No | Valor del `RoleEnum` (`agremiado`, `lider`, `finanzas`, `administrador`). Por defecto: `no_agremiado` |
+| `curp` | No | CURP del usuario |
+| `fecha_nacimiento` | No | Soporta formatos `d/m/Y H:i`, `d/m/Y`, `Y-m-d H:i:s`, `Y-m-d` |
+| `direccion` | No | Dirección del usuario |
+| `telefono` | No | Teléfono de contacto |
+| `categoria` | No | Categoría laboral |
+| `departamento` | No | Departamento en el ITSM |
+| `nss` | No | Número de Seguridad Social |
+| `fecha_ingreso` | No | Fecha de inicio laboral (mismos formatos que `fecha_nacimiento`) |
+
+### Comportamiento
+
+- Si un correo ya existe en la base de datos, el registro es **omitido** (no se lanza error, se reporta como `Omitido`).
+- Los errores por fila se reportan individualmente sin interrumpir la importación.
+- El proceso termina con código de salida `1` si hubo algún error; `0` si todos los registros fueron importados u omitidos limpiamente.
+
+### Ejemplo de salida
+
+```
+Buscando en /ruta/usuarios.csv
+Registrado: Juan Pérez García (juan.perez@example.com)
+Omitido (email duplicado): maria.lopez@example.com
+Error en fila 5: Nombre o apellidos faltantes.
+
+Resumen de importacion
+- Importados: 47
+- Omitidos: 2
+- Errores: 1
+```
+
+<Warning>
+  Todos los usuarios importados reciben la misma contraseña temporal. Asegúrate de notificarles que deben cambiarla en su primer acceso o forzar el cambio mediante el módulo de configuración de usuarios.
+</Warning>
+
+---
+
+## Scripts de Composer
+
+El archivo `composer.json` define los siguientes scripts de desarrollo:
+
+### `composer run minificar`
+
+Ejecuta `php commands/minificar-archivos.php`, que minimiza los archivos CSS y JavaScript del proyecto utilizando `matthiasmullie/minify`.
+
+```bash
+composer run minificar
+```
+
+Ejecuta este comando antes de desplegar a producción para reducir el tamaño de los assets.
+
+### `composer run servidor`
+
+Inicia el servidor de desarrollo integrado de PHP en `localhost:8888`, usando el directorio raíz del proyecto (`.`) como document root:
+
+```bash
+composer run servidor
+# Equivalente a:
+php -S localhost:8888 -t .
+```
+
+<Note>
+  El servidor de desarrollo de PHP no está pensado para producción. Para despliegues en producción consulta la guía de instalación y la configuración de Nginx o Apache.
+</Note>

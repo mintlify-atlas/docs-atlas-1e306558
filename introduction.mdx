@@ -1,0 +1,75 @@
+---
+title: Introducción
+description: Portal web oficial del Sindicato Único de Trabajadores del Instituto Tecnológico Superior de Macuspana (SIUT-ITSM)
+---
+
+# SIUT-ITSM Portal Sindical
+
+El **Portal Sindical SIUT-ITSM** es la plataforma digital oficial del Sindicato Único de Trabajadores del Instituto Tecnológico Superior de Macuspana. Ofrece a los agremiados y personal directivo un espacio centralizado para gestionar trámites, consultar información sindical y comunicarse con la organización.
+
+<CardGroup cols={2}>
+  <Card title="Inicio rápido" icon="rocket" href="/quickstart">
+    Configura e instala el portal en minutos
+  </Card>
+  <Card title="Módulos" icon="puzzle-piece" href="/modules/auth">
+    Explora los módulos funcionales del sistema
+  </Card>
+  <Card title="Panel de usuario" icon="gauge" href="/portal/overview">
+    Conoce el panel de control y sus secciones
+  </Card>
+  <Card title="Arquitectura" icon="sitemap" href="/development/architecture">
+    Entiende la estructura técnica del proyecto
+  </Card>
+</CardGroup>
+
+## ¿Qué es SIUT-ITSM?
+
+SIUT-ITSM es una aplicación web desarrollada en **PHP 8.3+** que sirve como portal oficial para los integrantes del sindicato. Permite gestionar trámites internos, publicar noticias y comunicados, administrar préstamos, y mantener un directorio de agremiados con sus documentos e información laboral.
+
+## Funcionalidades principales
+
+<CardGroup cols={2}>
+  <Card title="Autenticación y roles" icon="shield-halved">
+    Sistema de login seguro con roles diferenciados: agremiado, líder, finanzas y no agremiado.
+  </Card>
+  <Card title="Gestión de usuarios" icon="users">
+    Alta, edición y administración de agremiados con documentos, datos laborales y bancarios.
+  </Card>
+  <Card title="Préstamos sindicales" icon="hand-holding-dollar">
+    Solicitud, simulación y seguimiento de préstamos con generación de PDFs.
+  </Card>
+  <Card title="Publicaciones" icon="newspaper">
+    Publicación de noticias, avisos y documentos de transparencia sindical.
+  </Card>
+  <Card title="Mensajería" icon="envelope">
+    Buzón interno y notificaciones por correo electrónico vía PHPMailer.
+  </Card>
+  <Card title="Transparencia" icon="eye">
+    Acceso público a información de transparencia y documentos oficiales.
+  </Card>
+</CardGroup>
+
+## Tecnologías
+
+| Tecnología | Propósito |
+|---|---|
+| PHP 8.3+ | Lenguaje de backend principal |
+| Latte 3.x | Motor de plantillas para las vistas |
+| PHP-DI 7.x | Contenedor de inyección de dependencias |
+| Monolog 3.x | Sistema de logging |
+| PHPMailer 6.x | Envío de correos electrónicos |
+| dompdf 3.x | Generación de documentos PDF |
+| Pest 4.x | Framework de pruebas |
+| MySQL / MariaDB | Base de datos relacional |
+| Docker | Contenedores para despliegue |
+
+## Estructura de navegación
+
+El portal tiene dos áreas principales:
+
+- **Área pública** (`/public/`) — Accesible sin autenticación: página principal, publicaciones, transparencia, contacto y preguntas frecuentes.
+- **Portal privado** (`/public/portal/`) — Requiere autenticación. Muestra contenido personalizado según el rol del usuario.
+
+<Note>
+  Para comenzar a usar el portal, revisa los [requisitos del sistema](/setup/requirements) y sigue la [guía de instalación](/setup/installation).
+</Note>

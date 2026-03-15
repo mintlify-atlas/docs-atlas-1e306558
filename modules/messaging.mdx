@@ -1,0 +1,197 @@
+---
+title: "Módulo de mensajería"
+description: "Buzón interno de mensajes, clasificación por tipo y prioridad, notificaciones por correo electrónico mediante cola de envío y PHPMailer."
+---
+
+## Descripción general
+
+`MessagingModule` extiende `AbstractModule` sin registraciones DI adicionales. La infraestructura de mensajería se apoya en la tabla `mail_queue` para gestionar el envío de correos de forma asíncrona, y en los enumerados de dominio que clasifican los mensajes del buzón interno.
+
+```php
+final class MessagingModule extends AbstractModule {}
+```
+
+---
+
+## Buzón interno
+
+El buzón (`/portal/buzon/`) permite a los agremiados enviar mensajes a la administración del sindicato. Los mensajes se clasifican por tipo, prioridad y estado.
+
+### Tipos de mensaje (`MessageTypeEnum`)
+
+```php
+enum MessageTypeEnum: string
+{
+    case GeneralContact      = "contacto_general";
+    case TransparencyDoubt   = "transparencia_duda";
+    case ComplaintBox        = "buzon_queja";
+}
+```
+
+| Caso | Valor | Descripción |
+|------|-------|-------------|
+| `GeneralContact` | `contacto_general` | Consultas o comunicados generales al sindicato |
+| `TransparencyDoubt` | `transparencia_duda` | Dudas relacionadas con la sección de transparencia |
+| `ComplaintBox` | `buzon_queja` | Quejas formales ante la directiva |
+
+### Prioridades (`MessagePriorityEnum`)
+
+```php
+enum MessagePriorityEnum: string
+{
+    case Low    = "baja";
+    case Medium = "media";
+    case High   = "alta";
+    case Urgent = "urgente";
+}
+```
+
+### Estados de conversación (`MessageStateEnum`)
+
+```php
+enum MessageStateEnum: string
+{
+    case Open       = "abierto";
+    case InProgress = "en_proceso";
+    case Closed     = "cerrado";
+    case Answered   = "respondido";
+    case Archived   = "archivado";
+}
+```
+
+<Tabs>
+  <Tab title="Ciclo de vida de un mensaje">
+    <Steps>
+      <Step title="Apertura">
+        El agremiado envía un mensaje desde el buzón. Estado inicial: `abierto`.
+      </Step>
+      <Step title="En proceso">
+        Un administrador o líder toma el mensaje y lo marca como `en_proceso`.
+      </Step>
+      <Step title="Respuesta">
+        Se emite una respuesta. Estado: `respondido`. El agremiado recibe notificación por correo.
+      </Step>
+      <Step title="Cierre">
+        La conversación se resuelve y pasa a `cerrado`.
+      </Step>
+      <Step title="Archivo">
+        Mensajes cerrados pueden archivarse (`archivado`) para limpiar la vista activa.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Esquema de base de datos (comentado)">
+
+```sql
+-- mensajes
+-- mensaje_id           INT AUTO_INCREMENT PRIMARY KEY
+-- usuario_id           INT  (FK → users)
+-- tipo                 VARCHAR(50)  -- 'contacto_general', 'transparencia_duda', 'buzon_queja'
+-- asunto               VARCHAR(255)
+-- prioridad            VARCHAR(20)  DEFAULT 'media'
+-- estado               VARCHAR(20)  DEFAULT 'no_leido'
+-- nombre_externo       VARCHAR(100) -- si el remitente no está logueado
+-- correo_externo       VARCHAR(100)
+-- telefono_externo     VARCHAR(20)
+-- asignado_a           VARCHAR(36)  -- user_id del admin asignado
+-- fecha_creacion       DATETIME     DEFAULT CURRENT_TIMESTAMP
+-- fecha_ultimo_mensaje DATETIME
+-- fecha_cierre         DATETIME
+
+-- mensaje_detalles
+-- detalle_id           INT AUTO_INCREMENT PRIMARY KEY
+-- mensaje_id           INT  NOT NULL (FK → mensajes)
+-- autor_usuario_id     INT          -- NULL si es remitente externo
+-- es_respuesta_staff   BOOLEAN      DEFAULT FALSE
+-- mensaje              TEXT         NOT NULL
+-- adjunto_url          VARCHAR(255)
+-- fecha_envio          DATETIME     DEFAULT CURRENT_TIMESTAMP
+-- leido                BOOLEAN      DEFAULT FALSE
+-- fecha_lectura        DATETIME
+```
+
+<Info>
+La tabla `mensajes` está actualmente comentada en `database.sql`. La implementación completa del buzón está en desarrollo.
+</Info>
+
+  </Tab>
+</Tabs>
+
+---
+
+## Sistema de correo electrónico
+
+### Cola de envío (`mail_queue`)
+
+Todos los correos salientes del sistema (recuperación de contraseña, notificaciones de préstamo, respuestas del buzón) se encolan en `mail_queue` antes de ser enviados. Un proceso cron procesa la cola de forma periódica.
+
+```sql
+CREATE TABLE IF NOT EXISTS mail_queue (
+    id           INT AUTO_INCREMENT PRIMARY KEY,
+    recipient    TEXT         NOT NULL,
+    subject      VARCHAR(255) NOT NULL,
+    body         MEDIUMTEXT   NOT NULL,    -- HTML del correo
+    alt_body     TEXT,                     -- texto plano
+    priority     TINYINT      DEFAULT 2,  -- 1: Urgente, 2: Normal, 3: Newsletter
+    attempts     INT          DEFAULT 0,
+    max_attempts INT          DEFAULT 3,
+    status       ENUM('pending','sending','sent','failed') DEFAULT 'pending',
+    last_error   TEXT,
+    scheduled_at TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+    locked_at    TIMESTAMP    NULL,
+    lock_token   VARCHAR(64)  NULL,        -- evita colisiones entre procesos
+    created_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+    INDEX (status, priority, scheduled_at),
+    INDEX (status, lock_token)
+);
+```
+
+**Estados de un correo en cola:**
+
+| Estado | Descripción |
+|--------|-------------|
+| `pending` | En espera de ser procesado |
+| `sending` | Siendo enviado por el proceso cron (bloqueado con `lock_token`) |
+| `sent` | Enviado exitosamente |
+| `failed` | Falló tras agotar `max_attempts` (por defecto 3) |
+
+### PasswordRecoveryMailer
+
+Implementación concreta de `PasswordRecoveryNotifierInterface` que usa `MailerInterface` (PHPMailer) y renderiza plantillas Latte:
+
+```php
+final readonly class PasswordRecoveryMailer implements PasswordRecoveryNotifierInterface
+{
+    public function __construct(
+        private MailerInterface   $mailer,
+        private RendererInterface $renderer,
+        private string            $templateBasePath,
+    ) {}
+
+    public function sendMagicLink(string $email, string $magicLink): void
+    {
+        $subject      = "Recuperación de contraseña";
+        $templatePath = $this->templateBasePath
+            . "/templates/emails/reset-password.latte";
+
+        $body    = $this->renderer->renderToString($templatePath, [
+            "link" => $magicLink,
+            "year" => date('Y'),
+        ]);
+        $altBody = "Abre este enlace para recuperar tu contraseña: {$magicLink}";
+
+        $this->mailer->send([$email], $subject, $body, $altBody);
+    }
+}
+```
+
+### Prioridades de la cola
+
+| Valor | Significado |
+|-------|-------------|
+| `1` | Urgente — se procesa primero |
+| `2` | Normal — comportamiento por defecto |
+| `3` | Newsletter / masivo — menor prioridad |
+
+<Warning>
+El campo `lock_token` y `locked_at` en `mail_queue` implementan un mecanismo de bloqueo optimista para evitar que múltiples procesos cron envíen el mismo correo simultáneamente. Un correo bloqueado por más de 5 minutos debe considerarse huérfano y puede liberarse manualmente.
+</Warning>

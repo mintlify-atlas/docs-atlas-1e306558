@@ -1,0 +1,181 @@
+---
+title: "Configuración de la base de datos"
+description: "Esquema de tablas del Portal Sindical SIUT-ITSM, instrucciones de importación y recomendaciones para producción."
+---
+
+El portal utiliza **MySQL 8.0** o **MariaDB 10.5+** como motor de base de datos. El esquema completo se encuentra en `database.sql`, y los datos de ejemplo opcionales en `database.seed.sql`.
+
+## Importar el esquema
+
+<Steps>
+  <Step title="Crear la base de datos">
+    Conéctate a MySQL con un usuario con permisos de administración y crea la base de datos:
+
+    ```sql
+    CREATE DATABASE siut_itsm
+      CHARACTER SET utf8mb4
+      COLLATE utf8mb4_unicode_ci;
+    ```
+  </Step>
+
+  <Step title="Importar la estructura">
+    Ejecuta `database.sql` para crear todas las tablas:
+
+    ```bash
+    mysql -u tu_usuario -p siut_itsm < database.sql
+    ```
+  </Step>
+
+  <Step title="Cargar datos de ejemplo (opcional)">
+    Si necesitas un entorno de prueba con datos precargados:
+
+    ```bash
+    mysql -u tu_usuario -p siut_itsm < database.seed.sql
+    ```
+  </Step>
+</Steps>
+
+### Importar en Docker
+
+Si usas el entorno Docker del proyecto:
+
+```bash
+docker compose exec db mysql -uroot -proot my_db < database.sql
+docker compose exec db mysql -uroot -proot my_db < database.seed.sql
+```
+
+---
+
+## Descripción de las tablas
+
+### Usuarios y autenticación
+
+#### `users`
+Almacena todos los usuarios del portal (agremiados, administradores y personal).
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| `user_id` | INT PK | Identificador único autoincremental |
+| `email` | VARCHAR(100) | Correo electrónico (único) |
+| `password_hash` | VARCHAR(255) | Hash de la contraseña |
+| `role` | VARCHAR(20) | Rol del usuario (`no_agremiado`, etc.) |
+| `active` | BOOLEAN | Indica si la cuenta está activa |
+| `curp` | VARCHAR(20) | CURP del trabajador |
+| `name` | VARCHAR(100) | Nombre(s) |
+| `surnames` | VARCHAR(255) | Apellidos |
+| `birthdate` | DATE | Fecha de nacimiento |
+| `address` | VARCHAR(255) | Domicilio |
+| `phone` | VARCHAR(50) | Teléfono |
+| `photo` | VARCHAR(255) | Ruta de la foto de perfil |
+| `bank_name` | VARCHAR(100) | Nombre del banco |
+| `interbank_code` | VARCHAR(18) | CLABE interbancaria |
+| `bank_account` | VARCHAR(20) | Número de cuenta bancaria |
+| `category` | VARCHAR(100) | Categoría laboral |
+| `department` | VARCHAR(100) | Departamento de adscripción |
+| `nss` | VARCHAR(15) | Número de Seguridad Social |
+| `salary` | DECIMAL(12,2) | Salario |
+| `work_start_date` | DATE | Fecha de ingreso |
+| `last_entry` | DATETIME | Último inicio de sesión |
+| `created_at` | DATETIME | Fecha de creación del registro |
+
+#### `user_documents`
+Documentos de afiliación y verificación cargados por los usuarios (INE, comprobante de domicilio, etc.).
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| `document_id` | INT PK | Identificador único |
+| `user_id` | INT FK | Usuario propietario del documento |
+| `document_type` | VARCHAR(100) | Tipo: `afiliacion`, `ine`, `comprobante_domicilio`, etc. |
+| `file_path` | VARCHAR(255) | Ruta del archivo en el servidor |
+| `status` | VARCHAR(30) | Estado: `pendiente`, `validado`, `rechazado` |
+| `observation` | TEXT | Observaciones del validador |
+| `validated_by` | INT | `user_id` del administrador que validó |
+
+#### `auth_logs`
+Registro de auditoría de todos los intentos de autenticación.
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| `auth_id` | INT PK | Identificador único |
+| `user_id` | INT FK | Usuario que intentó autenticarse (nullable) |
+| `email` | VARCHAR(255) | Correo utilizado en el intento |
+| `action` | VARCHAR(50) | Acción registrada (p. ej. `login`, `logout`) |
+| `ip_address` | VARCHAR(45) | Dirección IP del cliente |
+| `user_agent` | VARCHAR(255) | Agente de usuario del navegador |
+| `success` | BOOLEAN | `TRUE` si la autenticación fue exitosa |
+| `error_message` | TEXT | Mensaje de error en caso de fallo |
+| `created_at` | TIMESTAMP | Marca de tiempo del evento |
+
+#### `password_resets`
+Tokens temporales para el flujo de recuperación de contraseña.
+
+| Columna | Tipo | Descripción |
+|---|---|---|
+| `email` | VARCHAR(255) | Correo del usuario que solicitó el restablecimiento |
+| `token` | BINARY(16) | Token aleatorio (UUID binario) |
+| `created_at` | TIMESTAMP | Fecha y hora de creación del token |
+
+---
+
+### Módulo de préstamos
+
+#### `cat_income_types`
+Catálogo de tipos de ingreso utilizados para configurar los planes de pago de préstamos (quincena, aguinaldo, bono, etc.).
+
+#### `loans`
+Solicitudes de préstamo con su ciclo de vida completo: desde borrador hasta liquidación. Incluye montos, tasas, plazos, fechas de workflow y signatarios.
+
+#### `loan_payment_configuration`
+Detalla cómo se distribuye el pago de un préstamo entre diferentes fuentes de ingreso, incluyendo método de cálculo de interés (`simple_aleman` o compuesto) y documentos probatorios.
+
+#### `loan_legal_documents`
+Documentos legales generados para cada préstamo (pagarés, contratos), con control de firmas del usuario y validación de finanzas.
+
+#### `loan_amortization`
+Tabla de amortización calculada para cada préstamo. Registra el desglose por pago: capital, interés ordinario, saldo inicial/final y pagos reales realizados.
+
+#### `loan_extraordinary_payments`
+Pagos extraordinarios: anticipos, abonos a capital y liquidaciones totales. Cada pago puede regenerar la tabla de amortización.
+
+#### `loan_restructurings`
+Historial de reestructuraciones de préstamos, vinculando el préstamo original con el nuevo y registrando los saldos pendientes al momento de la reestructura.
+
+#### `loan_receipts`
+Comprobantes generados automáticamente para cada movimiento financiero (desembolso, pago regular, pago extraordinario, cargo moratorio).
+
+---
+
+### Publicaciones
+
+#### `publications`
+Noticias, avisos y gestiones publicadas en el portal. Incluye tipo de publicación y fecha de expiración opcional.
+
+#### `publication_attachments`
+Archivos adjuntos (imágenes, documentos) asociados a una publicación.
+
+---
+
+### Sistema
+
+#### `system_colors`
+Configura la paleta de colores del portal (primario, secundario, éxito, etc.) con valores hexadecimales. Contiene una sola fila con `id = 1`.
+
+#### `mail_queue`
+Cola de correos electrónicos pendientes de envío. Admite reintentos configurables, prioridades (1: urgente, 2: normal, 3: newsletter) y bloqueo por token para evitar envíos duplicados en entornos con múltiples procesos.
+
+---
+
+## Recomendaciones para producción
+
+<Note>
+  Antes de desplegar en producción, considera las siguientes prácticas:
+
+  - Crea un usuario MySQL dedicado con permisos únicamente sobre la base de datos del portal (`GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP ON siut_itsm.* TO 'app_user'@'localhost';`).
+  - Realiza respaldos periódicos con `mysqldump siut_itsm > backup_$(date +%F).sql`.
+  - Habilita conexiones SSL entre la aplicación y la base de datos si ambos servicios están en hosts distintos.
+  - Establece `APP_ENV=prod` en el archivo `.env` para suprimir mensajes de error detallados en el navegador.
+</Note>
+
+<Warning>
+  El archivo `database.seed.sql` contiene datos de prueba. **No lo importes en producción**, ya que puede incluir usuarios, contraseñas de ejemplo y registros ficticios.
+</Warning>

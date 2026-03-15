@@ -1,0 +1,330 @@
+---
+title: "Módulo de autenticación"
+description: "Gestión de sesiones, verificación de credenciales, bloqueo por intentos fallidos y recuperación de contraseña mediante magic link."
+---
+
+## Descripción general
+
+`AuthModule` registra todos los servicios, repositorios y casos de uso relacionados con la autenticación de usuarios en el portal. Extiende `AbstractModule` y declara sus dependencias de forma explícita en tres constantes estáticas.
+
+```php
+final class AuthModule extends AbstractModule
+{
+    protected const array REPOSITORIES = [
+        AuthLogRepositoryInterface::class      => PdoAuthLogRepository::class,
+        CredentialRepositoryInterface::class   => PdoCredentialRepository::class,
+        PasswordRecoveryInterface::class       => PdoPasswordRecoveryRepository::class,
+    ];
+
+    protected const array SERVICES = [
+        AuthEventLogger::class,
+        CredentialVerifier::class,
+        LoginAttemptPolicy::class,
+        MagicLinkTokenPolicy::class,
+    ];
+
+    protected const array USE_CASES = [
+        ChangePasswordWithTokenUseCase::class,
+        LoginUseCase::class,
+        LogoutUseCase::class,
+        PasswordResetUseCase::class,
+        RecoverPasswordWithMagicLinkUseCase::class,
+    ];
+}
+```
+
+---
+
+## Flujo principal de autenticación
+
+<Steps>
+  <Step title="Login">
+    El usuario envía su correo y contraseña. `LoginUseCase` verifica el número de intentos fallidos recientes, comprueba las credenciales con `CredentialVerifier`, registra el evento en `auth_logs` y escribe el objeto `AuthenticatedUser` en el contexto de sesión.
+  </Step>
+  <Step title="Sesión activa">
+    Mientras la sesión PHP está viva, `UserContextInterface::get()` devuelve el `AuthenticatedUser` con `id`, `name`, `email` y `role`. Cada página protegida lee este contexto para tomar decisiones de autorización.
+  </Step>
+  <Step title="Logout">
+    `LogoutUseCase` obtiene el usuario del contexto, destruye la sesión PHP y persiste un evento de tipo `AuthLogActionEnum::Logout` en `auth_logs`.
+  </Step>
+</Steps>
+
+---
+
+## Casos de uso
+
+<Accordion title="LoginUseCase">
+
+**Firma completa:**
+
+```php
+final readonly class LoginUseCase
+{
+    public function __construct(
+        private CredentialRepositoryInterface $credentialRepository,
+        private CredentialVerifier            $credentialVerifier,
+        private LoginAttemptPolicy            $loginAttemptPolicy,
+        private UserContextInterface          $userContext,
+        private AuthEventLogger               $authEventLogger,
+    ) {}
+
+    /** @throws TooManyAttemptsException */
+    public function execute(
+        string $email,
+        string $password,
+        string $ipAddress,
+        string $userAgent,
+    ): bool
+}
+```
+
+**Comportamiento:**
+
+1. Llama a `LoginAttemptPolicy::ensureNotLocked($email)`. Si la cuenta tiene 5 o más intentos fallidos en los últimos 5 minutos, lanza `TooManyAttemptsException`.
+2. Busca las credenciales con `CredentialRepositoryInterface::findByEmail()`.
+3. Si la verificación falla (`CredentialVerifier::verify()` devuelve `false`), registra el intento fallido y retorna `false`.
+4. En caso de éxito, registra el evento, actualiza `last_entry` en la base de datos y almacena `AuthenticatedUser` en la sesión.
+
+</Accordion>
+
+<Accordion title="LogoutUseCase">
+
+```php
+final readonly class LogoutUseCase
+{
+    public function __construct(
+        private AuthEventLogger      $authEventLogger,
+        private UserContextInterface $userContext,
+        private SessionInterface     $session,
+    ) {}
+
+    public function execute(
+        ?string $ipAddress = null,
+        ?string $userAgent = null,
+    ): void
+}
+```
+
+Si no hay usuario en contexto (sesión ya expirada), el método retorna sin hacer nada. En caso contrario destruye la sesión y escribe un evento `AuthLogActionEnum::Logout` con `success = true`.
+
+</Accordion>
+
+<Accordion title="PasswordResetUseCase">
+
+```php
+final readonly class PasswordResetUseCase
+{
+    public function __construct(
+        private CredentialRepositoryInterface      $credentialRepository,
+        private PasswordRecoveryInterface          $passwordRecoveryRepository,
+        private PasswordRecoveryNotifierInterface  $passwordRecoveryNotifier,
+        private MagicLinkTokenPolicy               $magicLinkTokenPolicy,
+        private UrlBuilder                         $urlBuilder,
+        private AuthEventLogger                    $authEventLogger,
+    ) {}
+
+    public function execute(
+        string  $email,
+        ?string $ipAddress  = null,
+        ?string $userAgent  = null,
+    ): void
+}
+```
+
+Por diseño, si el correo no existe el método retorna silenciosamente para no revelar qué direcciones están registradas. Cuando el correo existe:
+
+1. Genera un token UUID v4 sin guiones (32 hex chars) mediante `MagicLinkTokenPolicy::generate()`.
+2. Persiste el par `(email, token)` en la tabla `password_resets`.
+3. Construye la URL `/cuentas/recuperar-contra.php?token=<token>`.
+4. Envía el correo a través de `PasswordRecoveryNotifierInterface::sendMagicLink()`.
+5. Registra el evento en `auth_logs`.
+
+</Accordion>
+
+<Accordion title="RecoverPasswordWithMagicLinkUseCase">
+
+```php
+final readonly class RecoverPasswordWithMagicLinkUseCase
+{
+    private const int MagicLinkTtlMinutes = 15;
+
+    public function __construct(
+        private PasswordRecoveryInterface $passwordRecoveryRepository,
+        private CredentialRepositoryInterface $credentialRepository,
+        private MagicLinkTokenPolicy      $magicLinkTokenPolicy,
+        private UserContextInterface      $userContext,
+        private AuthEventLogger           $authEventLogger,
+    ) {}
+
+    public function execute(
+        string  $token,
+        ?string $ipAddress = null,
+        ?string $userAgent = null,
+    ): bool
+}
+```
+
+Abre sesión directamente mediante un token válido **sin requerir contraseña**. El token debe tener exactamente 32 caracteres hexadecimales y no haber expirado (TTL: 15 minutos). Tras autenticar al usuario, consume el token para que no pueda reutilizarse.
+
+</Accordion>
+
+<Accordion title="ChangePasswordWithTokenUseCase">
+
+```php
+final readonly class ChangePasswordWithTokenUseCase
+{
+    private const int MagicLinkTtlMinutes = 15;
+
+    public function __construct(
+        private PasswordRecoveryInterface     $passwordRecoveryRepository,
+        private CredentialRepositoryInterface $credentialRepository,
+        private MagicLinkTokenPolicy          $magicLinkTokenPolicy,
+        private UserContextInterface          $userContext,
+        private AuthEventLogger               $authEventLogger,
+        private TransactionManager            $transactionManager,
+    ) {}
+
+    public function execute(
+        string  $token,
+        string  $newPassword,
+        ?string $ipAddress = null,
+        ?string $userAgent = null,
+    ): bool
+
+    public function validateToken(string $token): ?string
+}
+```
+
+Actualiza la contraseña del usuario dentro de una transacción atómica que incluye:
+
+1. Hash de la nueva contraseña con `password_hash($newPassword, PASSWORD_DEFAULT)`.
+2. `CredentialRepositoryInterface::updatePassword()` — actualiza `password_hash` en `users`.
+3. `PasswordRecoveryInterface::consumeToken()` — elimina el token de `password_resets`.
+
+Si la transacción tiene éxito, autentica al usuario automáticamente y registra el evento `PasswordReset` con `success = true`.
+
+El método auxiliar `validateToken()` permite verificar un token sin consumirlo (útil para mostrar el formulario de nueva contraseña).
+
+</Accordion>
+
+---
+
+## Servicios de dominio
+
+<CardGroup cols={2}>
+  <Card title="LoginAttemptPolicy">
+    Protege contra ataques de fuerza bruta. Consulta `AuthLogRepositoryInterface::getCountLastFailedAttempts()` y lanza `TooManyAttemptsException` si el conteo de los últimos 5 minutos alcanza 5 intentos fallidos.
+  </Card>
+  <Card title="MagicLinkTokenPolicy">
+    Genera tokens UUID v4 sin guiones (32 caracteres hex) usando `Ramsey\Uuid`. Valida que un token sea cadena hexadecimal de exactamente 32 caracteres mediante `ctype_xdigit()`.
+  </Card>
+  <Card title="CredentialVerifier">
+    Servicio de dominio que encapsula `UserCredential::verifyPassword()`. Verifica que la cuenta esté activa (`isActive`) y que el hash coincida con `password_verify()`.
+  </Card>
+  <Card title="AuthEventLogger">
+    Servicio de aplicación que persiste eventos en `auth_logs`. Expone métodos: `successLoginAttempt`, `failedLoginAttempt`, `logoutSuccess`, `passwordResetRequested`, `passwordResetSuccess`, `passwordResetFailed`.
+  </Card>
+</CardGroup>
+
+---
+
+## Flujo de recuperación de contraseña
+
+<Steps>
+  <Step title="Solicitud del usuario">
+    El usuario ingresa su correo en `/cuentas/recuperar-contra.php`. Se invoca `PasswordResetUseCase::execute()`, que genera un token y envía el magic link por correo mediante `PasswordRecoveryMailer`.
+  </Step>
+  <Step title="Correo electrónico">
+    `PasswordRecoveryMailer` renderiza la plantilla `templates/emails/reset-password.latte` con la variable `link` y envía el mensaje vía `MailerInterface`. El asunto del correo es `"Recuperación de contraseña"`.
+  </Step>
+  <Step title="Acceso con magic link">
+    Al abrir el enlace, se invoca `RecoverPasswordWithMagicLinkUseCase::execute($token)`. Si el token es válido y no ha expirado (15 minutos), el usuario queda autenticado en sesión.
+  </Step>
+  <Step title="Cambio de contraseña">
+    La misma sesión permite al usuario establecer una nueva contraseña. Se invoca `ChangePasswordWithTokenUseCase::execute($token, $newPassword)`, que actualiza el hash y consume el token de forma atómica.
+  </Step>
+</Steps>
+
+---
+
+## Entidades y enumeraciones
+
+<Tabs>
+  <Tab title="UserCredential">
+
+```php
+final readonly class UserCredential
+{
+    public function __construct(
+        public int     $id,
+        public string  $name,
+        public string  $email,
+        public string  $passwordHash,
+        public RoleEnum $role,
+        public bool    $isActive,
+    ) {}
+
+    public function verifyPassword(string $password): bool
+    {
+        if (!$this->isActive) {
+            return false;
+        }
+        return password_verify($password, $this->passwordHash);
+    }
+}
+```
+
+  </Tab>
+  <Tab title="AuthLogActionEnum">
+
+```php
+enum AuthLogActionEnum: string
+{
+    case LoginAttempt  = "login_attempt";
+    case Logout        = "logout";
+    case PasswordReset = "password_reset";
+}
+```
+
+  </Tab>
+  <Tab title="auth_logs (SQL)">
+
+```sql
+CREATE TABLE IF NOT EXISTS auth_logs (
+    auth_id       INT AUTO_INCREMENT PRIMARY KEY,
+    user_id       INT,
+    email         VARCHAR(255),
+    action        VARCHAR(50)  NOT NULL,
+    ip_address    VARCHAR(45),
+    user_agent    VARCHAR(255),
+    success       BOOLEAN      NOT NULL DEFAULT FALSE,
+    error_message TEXT,
+    created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE SET NULL,
+    INDEX idx_usuario_id (user_id),
+    INDEX idx_action (action),
+    INDEX idx_created_at (created_at)
+);
+```
+
+  </Tab>
+  <Tab title="password_resets (SQL)">
+
+```sql
+CREATE TABLE IF NOT EXISTS password_resets (
+    email      VARCHAR(255) NOT NULL,
+    token      BINARY(16)   NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX (email),
+    INDEX (token)
+);
+```
+
+  </Tab>
+</Tabs>
+
+---
+
+<Warning>
+Los tokens de magic link tienen una vigencia de **15 minutos** (`MagicLinkTtlMinutes = 15`). Una vez consumidos no pueden reutilizarse. Las cuentas se bloquean temporalmente después de **5 intentos fallidos** consecutivos de inicio de sesión.
+</Warning>

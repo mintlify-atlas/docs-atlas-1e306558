@@ -1,0 +1,180 @@
+---
+title: Arquitectura del proyecto
+description: Descripción de la arquitectura modular inspirada en DDD del proyecto SIUT-ITSM, su estructura de directorios, capas y el sistema de inyección de dependencias con PHP-DI.
+---
+
+El proyecto sigue una arquitectura **modular inspirada en Domain-Driven Design (DDD)**, organizada en capas bien definidas dentro del directorio `app/`. Cada módulo de negocio encapsula sus propias entidades, casos de uso, repositorios e infraestructura, mientras que el código transversal reside en `app/Shared/`.
+
+## Estructura de directorios
+
+```
+/
+├── app/                        # Código de la aplicación
+│   ├── Bootstrap.php           # Punto de entrada al contenedor DI
+│   ├── Http/                   # Capa HTTP
+│   │   ├── Middleware/         # AuthMiddleware, RoleMiddleware, etc.
+│   │   ├── Request/            # FormRequest, JsonRequest
+│   │   └── Response/           # JsonResponse, RedirectResponse, Redirector
+│   ├── Infrastructure/         # Implementaciones de infraestructura
+│   │   ├── Config/             # AppConfig, DatabaseConfig, MailerConfig, etc.
+│   │   ├── Env/                # Environment, EnvironmentInterface
+│   │   ├── Mail/               # EmailService, DatabaseMailQueue, PHPMailer wiring
+│   │   ├── Persistence/        # PdoTransactionManager
+│   │   ├── Security/           # CsrfTokenManager
+│   │   ├── Session/            # PhpSession, SessionInterface
+│   │   ├── Templating/         # LatteRenderer, LatteExtension, RendererInterface
+│   │   └── Upload/             # Gestión de archivos subidos
+│   ├── Modules/                # Módulos de negocio
+│   │   ├── Auth/               # Autenticación y recuperación de contraseña
+│   │   ├── Loan/               # Préstamos sindicales
+│   │   ├── Messaging/          # Mensajería y buzón
+│   │   ├── Publication/        # Publicaciones y avisos
+│   │   ├── Setting/            # Configuración del sistema
+│   │   └── User/               # Gestión de usuarios
+│   └── Shared/                 # Código transversal
+│       ├── Context/            # UserContext, UserProviderInterface
+│       ├── Domain/             # RoleEnum y value objects compartidos
+│       ├── Security/           # AuthenticatedUser
+│       └── Utils/              # DocumentHelper, UrlBuilder
+├── commands/                   # Scripts CLI
+│   ├── importar-direcciones.php
+│   ├── importar-usuarios.php
+│   └── minificar-archivos.php
+├── config/
+│   ├── definitions.php         # Definiciones del contenedor DI
+│   └── settings.php            # Configuración de AppConfig
+├── public/                     # Raíz web (document root)
+│   ├── index.php               # Entrada zona pública
+│   ├── portal/                 # Entrada portal privado
+│   └── assets/                 # CSS, JS, imágenes
+├── templates/                  # Plantillas Latte compartidas
+│   ├── @base.latte
+│   ├── @landing.latte
+│   ├── @portal.latte
+│   ├── @portal.sidebar.latte
+│   └── @portal.navbar.latte
+├── tests/                      # Suite de pruebas (Pest)
+├── bootstrap.php               # Carga el autoloader de Composer
+├── composer.json
+└── phpunit.xml
+```
+
+## Capas de la arquitectura
+
+Cada módulo en `app/Modules/` replica la misma estructura de tres capas:
+
+<Accordion title="Domain">
+  Contiene la lógica de negocio pura, sin dependencias externas:
+
+  - **Entity/**: Entidades de dominio con identidad propia.
+  - **ValueObject/**: Objetos de valor inmutables.
+  - **Repository/**: Interfaces de repositorios (contratos, no implementaciones).
+  - **Enum/**: Enumeraciones de dominio.
+  - **Exception/**: Excepciones de dominio específicas del módulo.
+  - **Service/**: Servicios de dominio sin efectos secundarios de infraestructura.
+
+  Ejemplo: `app/Modules/User/Domain/`
+</Accordion>
+
+<Accordion title="Application">
+  Orquesta los casos de uso coordinando el dominio con la infraestructura mediante interfaces:
+
+  - **UseCase/**: Clases de un solo método público `execute()`. Cada clase representa una acción de usuario.
+  - **DTO/**: Objetos de transferencia de datos para entrada y salida de casos de uso.
+
+  Ejemplo: `app/Modules/User/Application/UseCase/CreateUserUseCase.php` — utilizado por el comando CLI `importar-usuarios.php`.
+</Accordion>
+
+<Accordion title="Infrastructure">
+  Implementaciones concretas de las interfaces de dominio: repositorios PDO, servicios de correo, etc.
+
+  La infraestructura compartida reside en `app/Infrastructure/` y cubre:
+  - PDO (MySQL con `utf8mb4`)
+  - PHPMailer con cola de correo en base de datos
+  - Motor de plantillas Latte 3
+  - Gestión de sesión PHP nativa
+  - Tokens CSRF con expiración de 1 hora
+</Accordion>
+
+## Bootstrap y contenedor DI
+
+La clase `Bootstrap` en `app/Bootstrap.php` es el único punto de arranque del sistema. Se invoca en cada `*.php` del directorio `public/`:
+
+```php
+$container = Bootstrap::buildContainer();
+```
+
+El proceso de arranque realiza:
+
+1. **Carga variables de entorno** con `vlucas/phpdotenv`, validando las claves requeridas (`DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `MAILER_HOST`, `MAILER_USER`, `MAILER_PASSWORD`).
+2. **Detecta el entorno** a través de `APP_ENV` (`dev` o `prod`).
+3. **Construye el contenedor** PHP-DI. En producción activa la compilación en `tmp/di_cache` y la escritura de proxies en `tmp/di_proxies`.
+4. **Registra los módulos** — cada módulo implementa `ModuleInterface` y registra sus propias definiciones:
+
+```php
+$modules = [
+    new AuthModule(),
+    new MessagingModule(),
+    new PublicationModule(),
+    new SettingModule(),
+    new UserModule(),
+];
+
+foreach ($modules as $module) {
+    $module->register($builder);
+}
+```
+
+5. **Carga los archivos de configuración** `config/settings.php` y `config/definitions.php`.
+6. **Aplica la configuración de sesión** (strict mode, secure cookie, httponly, SameSite Lax).
+
+## Inyección de dependencias (PHP-DI)
+
+El contenedor se configura en `config/definitions.php`. Las dependencias clave y sus vinculaciones son:
+
+```php
+// Motor de plantillas Latte
+Engine::class => function (AppConfig $config, LatteExtension $ext) {
+    $latte = new Engine();
+    $latte->setCacheDirectory(__DIR__ . '/../tmp/latte_cache');
+    $latte->setAutoRefresh($config->isDev);
+    return $latte;
+},
+
+// Conexión PDO (MySQL utf8mb4)
+PDO::class => function (AppConfig $config) {
+    $dsn = "mysql:host={$config->database->host};dbname={$config->database->database};charset=utf8mb4";
+    return new PDO($dsn, $config->database->user, $config->database->password, [
+        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    ]);
+},
+
+// Interfaces y sus implementaciones concretas
+RendererInterface::class         => autowire(LatteRenderer::class),
+SessionInterface::class          => autowire(PhpSession::class),
+MailerInterface::class           => autowire(DatabaseMailQueue::class),
+TransactionManager::class        => autowire(PdoTransactionManager::class),
+UserContextInterface::class      => autowire(UserContext::class),
+UserProviderInterface::class     => get(UserContextInterface::class),
+```
+
+`AppConfig` se construye en `config/settings.php` leyendo variables de entorno a través de `EnvironmentInterface`, agrupando la configuración de base de datos, mailer, uploads y sesión en objetos de valor tipados.
+
+## Tecnologías principales
+
+| Componente | Librería / Versión |
+|------------|-------------------|
+| PHP | `^8.3` |
+| Plantillas | `latte/latte ^3.0` |
+| Contenedor DI | `php-di/php-di ^7.1` |
+| ORM/DB | PDO nativo (MySQL) |
+| Correo | `phpmailer/phpmailer ^6.10` |
+| Lectura de CSV | `league/csv 9.24.1` |
+| Generación de PDF | `dompdf/dompdf ^3.1` |
+| UUIDs | `ramsey/uuid ^4.9` |
+| Variables de entorno | `vlucas/phpdotenv ^5.6` |
+| Logs | `monolog/monolog ^3.10` |
+| Minificación (dev) | `matthiasmullie/minify ^1.3` |
+| Datos de prueba (dev) | `fakerphp/faker ^1.24` |
+| Testing | `pestphp/pest ^4.4` |

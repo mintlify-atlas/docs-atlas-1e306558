@@ -1,0 +1,239 @@
+---
+title: "Módulo de publicaciones"
+description: "Gestión de noticias, avisos, gestiones sindicales y contratos publicados en el portal, con soporte para adjuntos multimedia y fecha de expiración."
+---
+
+## Descripción general
+
+`PublicationModule` orquesta el CRUD completo de publicaciones del portal sindical. Cada publicación tiene un tipo, contenido HTML saneado, adjuntos opcionales (imágenes, PDFs) y una miniatura.
+
+```php
+final class PublicationModule extends AbstractModule implements ModuleInterface
+{
+    protected const array REPOSITORIES = [
+        PublicationRepositoryInterface::class => PdoPublicationRepository::class,
+    ];
+
+    protected const array SERVICES = [
+        PublicationAttachmentUploader::class,
+    ];
+
+    protected const array USE_CASES = [
+        CreatePublicationUseCase::class,
+        UpdatePublicationUseCase::class,
+        DeletePublicationUseCase::class,
+        FindPublicationByIdUseCase::class,
+        FindPublicationsByTypeUseCase::class,
+    ];
+}
+```
+
+---
+
+## Tipos de publicación
+
+```php
+enum PublicationTypeEnum: string
+{
+    case Alert      = "aviso";
+    case News       = "noticia";
+    case Management = "gestion";
+    case Contracts  = "contratos";
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="aviso">
+    Avisos urgentes o informativos dirigidos a los agremiados. Se muestran en la sección `/portal/publicaciones/avisos.php`.
+  </Card>
+  <Card title="noticia">
+    Noticias generales del sindicato. Accesibles desde `/portal/publicaciones/noticias.php`.
+  </Card>
+  <Card title="gestion">
+    Documentos y comunicados de gestión sindical. Sección `/portal/publicaciones/gestiones.php`.
+  </Card>
+  <Card title="contratos">
+    Contratos colectivos y acuerdos. Sección `/portal/publicaciones/contratos.php`.
+  </Card>
+</CardGroup>
+
+---
+
+## Casos de uso
+
+### CreatePublicationUseCase
+
+```php
+final readonly class CreatePublicationUseCase
+{
+    public function __construct(
+        private PublicationRepositoryInterface $publicationRepository,
+        private PublicationAttachmentUploader  $attachmentUploader,
+        private TransactionManager             $transactionManager,
+    ) {}
+
+    public function execute(
+        int                  $authorId,
+        string               $title,
+        string               $content,
+        PublicationTypeEnum  $type,
+        ?string              $summary        = null,
+        ?DateTimeImmutable   $expirationDate = null,
+        ?array               $uploadedFiles  = null,
+        ?array               $thumbnailFile  = null,
+    ): int
+}
+```
+
+**Validaciones aplicadas:**
+
+- Título no vacío y máximo 100 caracteres.
+- Resumen máximo 255 caracteres.
+- Contenido HTML no vacío tras saneamiento.
+- Fecha de expiración no puede ser una fecha pasada.
+
+**Saneamiento de HTML:**
+
+El contenido se filtra con `strip_tags()` permitiendo únicamente las etiquetas seguras:
+
+```php
+strip_tags(
+    $clean,
+    "<p><br><strong><em><u><s><a><ul><ol><li>"
+    . "<blockquote><h1><h2><h3><h4><h5><h6>"
+    . "<pre><code><span>",
+)
+```
+
+Las etiquetas `<script>` y `<style>` se eliminan con una expresión regular antes del `strip_tags`.
+
+**Comportamiento transaccional:**
+
+Los archivos adjuntos se suben al sistema de archivos *antes* de iniciar la transacción. Si la transacción falla, los archivos ya subidos se eliminan del disco para evitar huérfanos.
+
+### UpdatePublicationUseCase
+
+```php
+public function execute(
+    int                  $publicationId,
+    string               $title,
+    string               $content,
+    PublicationTypeEnum  $type,
+    ?string              $summary           = null,
+    ?DateTimeImmutable   $expirationDate    = null,
+    ?array               $uploadedFiles     = null,
+    ?array               $thumbnailFile     = null,
+    ?array               $removeAttachmentIds = null,
+): void
+```
+
+Permite eliminar adjuntos existentes (por ID) y agregar nuevos en la misma operación. La miniatura anterior se borra del disco si se sube una nueva. La transacción envuelve: `update`, `deleteAttachmentsByIds` y `addAttachments`.
+
+### DeletePublicationUseCase
+
+```php
+public function execute(int $publicationId): PublicationTypeEnum
+```
+
+Elimina la publicación y todos sus adjuntos del disco. Retorna el `PublicationTypeEnum` de la publicación eliminada para que el controlador pueda redirigir al listado correcto.
+
+### FindPublicationByIdUseCase
+
+```php
+public function execute(int $id): ?Publication
+```
+
+Devuelve la entidad `Publication` completa con sus adjuntos, o `null` si no existe.
+
+### FindPublicationsByTypeUseCase
+
+```php
+public function execute(PublicationTypeEnum $type): array
+```
+
+Devuelve un array de publicaciones filtradas por tipo, ordenadas por fecha descendente.
+
+---
+
+## Entidad Publication
+
+```php
+final readonly class Publication
+{
+    /** @param PublicationAttachment[] $attachments */
+    public function __construct(
+        public int                $id,
+        public int                $authorId,
+        public string             $title,
+        public string             $content,
+        public PublicationTypeEnum $type,
+        public array              $attachments    = [],
+        public ?string            $thumbnailUrl   = null,
+        public ?string            $summary        = null,
+        public ?DateTimeImmutable $expirationDate = null,
+        public ?DateTimeImmutable $createdAt      = null,
+    ) {}
+
+    public function isExpired(): bool;
+    public function hasAttachments(): bool;
+}
+```
+
+---
+
+## Páginas del portal
+
+| Página | Ruta | Función |
+|--------|------|---------|
+| Noticias | `/portal/publicaciones/noticias.php` | Listado de noticias (`type = noticia`) |
+| Avisos | `/portal/publicaciones/avisos.php` | Listado de avisos (`type = aviso`) |
+| Gestiones | `/portal/publicaciones/gestiones.php` | Gestiones sindicales (`type = gestion`) |
+| Contratos | `/portal/publicaciones/contratos.php` | Contratos colectivos (`type = contratos`) |
+| Registrar | `/portal/publicaciones/registrar.php` | Formulario de nueva publicación |
+| Editar | `/portal/publicaciones/editar.php` | Formulario de edición |
+| Eliminar | `/portal/publicaciones/eliminar.php` | Confirmación y eliminación |
+
+---
+
+## Esquema de base de datos
+
+```sql
+CREATE TABLE IF NOT EXISTS publications (
+    publication_id   INT AUTO_INCREMENT PRIMARY KEY,
+    author_id        INT,
+    title            VARCHAR(100) NOT NULL,
+    summary          VARCHAR(255),
+    content          TEXT         NOT NULL,
+    thumbnail_url    VARCHAR(255),
+    publication_type VARCHAR(30)  NOT NULL,
+    expiration_date  DATE         DEFAULT NULL,
+    created_at       DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_publication_author
+        FOREIGN KEY (author_id) REFERENCES users (user_id)
+            ON DELETE SET NULL,
+    INDEX idx_type_date (publication_type, created_at),
+    INDEX idx_expiration (expiration_date)
+);
+
+CREATE TABLE IF NOT EXISTS publication_attachments (
+    attachment_id   INT AUTO_INCREMENT PRIMARY KEY,
+    publication_id  INT          NOT NULL,
+    file_path       VARCHAR(255) NOT NULL,
+    mime_type       VARCHAR(100) NOT NULL,
+    attachment_type VARCHAR(25)  NOT NULL,
+    description     VARCHAR(255),
+    CONSTRAINT fk_attachment_publication
+        FOREIGN KEY (publication_id)
+            REFERENCES publications (publication_id)
+            ON DELETE CASCADE,
+    INDEX idx_publication (publication_id)
+);
+```
+
+<Note>
+La miniatura (`thumbnail_url`) se resuelve automáticamente: si no se sube una imagen dedicada como miniatura, se usa la primera imagen encontrada entre los adjuntos. Si no hay imágenes, `thumbnail_url` queda en `null`.
+</Note>
+
+<Tip>
+La sección de **Transparencia** del portal (`/portal/transparencia/`) consume publicaciones de tipo `gestion` y `contratos` para cumplir con las obligaciones de transparencia sindical.
+</Tip>

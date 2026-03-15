@@ -1,0 +1,197 @@
+---
+title: Pruebas
+description: Guía para ejecutar y ampliar la suite de pruebas del proyecto SIUT-ITSM, construida sobre Pest y PHPUnit.
+---
+
+El proyecto utiliza [Pest](https://pestphp.com/) como framework de pruebas, que actúa como capa sobre PHPUnit ofreciendo una API funcional más expresiva.
+
+## Ejecutar las pruebas
+
+```bash
+vendor/bin/pest
+```
+
+Para ejecutar con cobertura de código (requiere Xdebug o PCOV):
+
+```bash
+vendor/bin/pest --coverage
+```
+
+Para filtrar pruebas por nombre:
+
+```bash
+vendor/bin/pest --filter "returns null when there is no authenticated user"
+```
+
+## Estructura de la suite
+
+```
+tests/
+├── Pest.php          # Configuración global de Pest
+├── TestCase.php      # Clase base abstracta (extiende PHPUnit TestCase)
+├── Feature/          # Pruebas de integración (vacío, listo para implementar)
+└── Unit/
+    └── Shared/
+        ├── Context/
+        │   └── UserProviderInterfaceTest.php
+        └── DocumentHelperTest.php
+```
+
+### `tests/Pest.php`
+
+Archivo de configuración global. Define que las pruebas en `Feature/` extiendan `Tests\TestCase`:
+
+```php
+pest()->extend(Tests\TestCase::class)->in('Feature');
+```
+
+También permite registrar expectations personalizadas y funciones helper globales:
+
+```php
+expect()->extend('toBeOne', function () {
+    return $this->toBe(1);
+});
+```
+
+### `tests/TestCase.php`
+
+Clase base abstracta para pruebas de integración:
+
+```php
+namespace Tests;
+
+use PHPUnit\Framework\TestCase as BaseTestCase;
+
+abstract class TestCase extends BaseTestCase
+{
+    //
+}
+```
+
+## Pruebas existentes
+
+### `UserProviderInterfaceTest.php`
+
+Valida el contrato de solo lectura de `UserProviderInterface` mediante un `InMemoryUserContext` de prueba:
+
+```php
+it('returns null when there is no authenticated user', function (): void {
+    $context = new InMemoryUserContext();
+    expect(readCurrentUser($context))->toBeNull();
+});
+
+it('returns the authenticated user through the read-only contract', function (): void {
+    $context = new InMemoryUserContext();
+    $user = new AuthenticatedUser(
+        id:    101,
+        name:  'Test User',
+        email: 'test@example.com',
+        role:  RoleEnum::Agremiado,
+    );
+    $context->set($user);
+    expect(readCurrentUser($context))->toBe($user);
+});
+
+it('does not cache stale user state through the read-only contract', function (): void {
+    // ...
+    $context->force($second);
+    expect(readCurrentUser($context))->toBe($second);
+});
+```
+
+### `DocumentHelperTest.php`
+
+Valida las reglas de negocio del helper de documentos por rol:
+
+```php
+it('returns only basic documents for no-agremiado', function (): void {
+    $list = DocumentHelper::resolveAllowedDocumentTypes(RoleEnum::NoAgremiado);
+    expect($list)->toHaveCount(3)
+        ->and($list)->toContain(DocumentTypeEnum::Ine)
+        ->and($list)->toContain(DocumentTypeEnum::ComprobanteDomicilio)
+        ->and($list)->toContain(DocumentTypeEnum::Curp);
+});
+
+it('returns full document set for other roles', function (): void {
+    $list = DocumentHelper::resolveAllowedDocumentTypes(RoleEnum::Admin);
+    expect($list)->toHaveCount(5)
+        ->and($list)->toContain(DocumentTypeEnum::Afiliacion)
+        ->and($list)->toContain(DocumentTypeEnum::ComprobantePago);
+});
+
+it('normalizes upload path (trims and strips prefix)', function (): void {
+    expect(DocumentHelper::normalizeUploadPath(null))->toBe('');
+    expect(DocumentHelper::normalizeUploadPath('/uploads/foo/bar.pdf'))->toBe('foo/bar.pdf');
+});
+
+it('allows admins and leaders to view other users', function (): void {
+    expect(DocumentHelper::canViewOtherUserDocuments(RoleEnum::Admin))->toBeTrue();
+    expect(DocumentHelper::canViewOtherUserDocuments(RoleEnum::Lider))->toBeTrue();
+    expect(DocumentHelper::canViewOtherUserDocuments(RoleEnum::Agremiado))->toBeFalse();
+});
+```
+
+## Configuración `phpunit.xml`
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+    bootstrap="vendor/autoload.php"
+    colors="true"
+>
+    <testsuites>
+        <testsuite name="Test Suite">
+            <directory suffix="Test.php">./tests</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+            <directory>src</directory>
+        </include>
+    </source>
+</phpunit>
+```
+
+- El bootstrap es `vendor/autoload.php` (el `bootstrap.php` del proyecto no se carga en pruebas para evitar efectos secundarios).
+- Se descubren automáticamente los archivos con sufijo `Test.php` en `./tests`.
+- La cobertura instrumenta el código en `app/` y `src/`.
+
+## Convenciones para nuevas pruebas
+
+<Tabs>
+  <Tab title="Unit">
+    Coloca las pruebas en `tests/Unit/` replicando la estructura del namespace:
+
+    ```
+    app/Modules/User/Domain/Entity/User.php
+    → tests/Unit/Modules/User/Domain/Entity/UserTest.php
+    ```
+
+    Las pruebas unitarias no deben usar el contenedor DI ni la base de datos. Usa objetos en memoria o mocks de PHPUnit.
+
+    ```php
+    it('validates email format', function (): void {
+        expect(fn() => new Email('not-an-email'))
+            ->toThrow(InvalidArgumentException::class);
+    });
+    ```
+  </Tab>
+
+  <Tab title="Feature">
+    Las pruebas de integración van en `tests/Feature/` y extienden `Tests\TestCase` automáticamente (configurado en `Pest.php`).
+
+    Úsalas para probar casos de uso completos con un repositorio en memoria o una base de datos de prueba configurada en `.env.testing`.
+  </Tab>
+</Tabs>
+
+<Tip>
+  Pest permite agrupar pruebas relacionadas con `describe()` para mejorar la legibilidad en suites grandes:
+
+  ```php
+  describe('RoleMiddleware', function () {
+      it('throws UnauthorizedException when session is null', ...);
+      it('throws ForbiddenException when role does not match', ...);
+  });
+  ```
+</Tip>
